@@ -16,6 +16,7 @@ dashboard at `hycu.pages.dev`.
 | CLI Entry | `tsx src/index.ts <command>` |
 | CLI Commands | `login`, `attend`, `status` |
 | Workers API | `https://hycu.pages.dev/api/{health,session,status,attend,sync}` |
+| Cron Trigger | `0 23 * * 1-5` (Mon–Fri 08:50 KST) — auto attendance |
 | Build (CLI) | `tsc` → `dist/` |
 | Build (Workers) | `wrangler deploy` |
 | Config (CLI) | `.env` (dotenv) — credentials + FIDO keys |
@@ -36,11 +37,11 @@ hycu/
 │   ├── status.ts               # Course progress display (table output)
 │   └── sync.ts                 # Dashboard sync — POSTs state to CF Pages API
 ├── web/                        # Cloudflare Workers dashboard + serverless API
-│   ├── wrangler.toml           # CF Workers config, KV namespace, vars, assets
+│   ├── wrangler.toml           # CF Workers config, KV namespace, vars, assets, cron triggers
 │   ├── package.json            # Dashboard deps (hono) + deploy scripts
 │   ├── tsconfig.json           # ES2022, @cloudflare/workers-types
 │   ├── src/                    # Workers application source (Hono)
-│   │   ├── index.ts            # Hono app entry — route registration + middleware
+│   │   ├── index.ts            # Hono app entry — route registration + middleware + scheduled handler
 │   │   ├── types.ts            # Shared type definitions (Env, SessionData, etc.)
 │   │   ├── middleware/
 │   │   │   └── auth.ts         # CORS + Bearer token auth middleware
@@ -175,10 +176,12 @@ Defines all types used across Workers:
 - `LessonSchedule`: schedule/time/content IDs, `title`, `pageCount`, `attended`, `progressRatio`, `lbnTm` (lecture duration minutes), date fields
 - `AttendResult`, `DashboardState`, `RunEvent`, `SyncPayload`
 
-### `web/src/index.ts` — Hono App Entry
+### `web/src/index.ts` — Hono App Entry + Scheduled Handler
 - Creates Hono app with `cors({ origin: '*' })` middleware
 - Applies auth middleware to `/api/*` routes
 - Mounts route sub-apps: health, session, status, attend, sync at `/api/`
+- Exports `scheduled` handler for Cron Triggers — runs full attendance flow automatically
+- Cron schedule: `0 23 * * 1-5` (UTC) = Mon–Fri 08:50 KST
 
 ### `web/src/lib/constants.ts` — Shared Constants
 ```typescript
@@ -205,12 +208,14 @@ KV_KEYS = { session: 'session:cookies', state: 'dashboard:state', events: 'dashb
 - `lbnTm` = lecture duration in minutes (from LMS API)
 - `requiredMinutes = Math.ceil(lbnTm * 0.55)` — 55% safety margin over 50% threshold
 - LMS attendance rule: `studyTotalTm / lbnTm >= 50%` → recognized as attended
+- **Dual-call pattern** (HAR-verified): sends two sequential `saveStdyRecord.do` requests ~2s apart with slightly different parameters (simulates real playback progression)
 - URL: `POST /lesson/stdy/saveStdyRecord.do` (verified from HAR captures)
-- Response: `{"result":1}` (in progress) or `{"result":100}` (complete)
+- Response: `{"result":1}` = success (record saved). Result ≥ 1 treated as success.
 
 ### `web/src/middleware/auth.ts` — Auth Middleware
 - Hono `createMiddleware` — applied to all `/api/*` routes
 - Bypasses `/api/health` (public endpoint)
+- **API_KEY guard**: Returns 500 if `API_KEY` env var is not configured (prevents auth bypass)
 - POST/DELETE requests require `Authorization: Bearer <API_KEY>`
 - GET/OPTIONS requests pass through
 
@@ -226,17 +231,19 @@ KV_KEYS = { session: 'session:cookies', state: 'dashboard:state', events: 'dashb
 - `GET /api/status` → Fetches courses + progress from LMS, caches in KV (5-min TTL)
 - `GET /api/status?refresh=true` → Bypasses cache
 - Falls back to cached state on error or expired session
+- Uses `c.executionCtx.waitUntil()` for non-blocking KV cache writes
 
 ### `web/src/routes/attend.ts` — Serverless Attendance
 - `POST /api/attend` → Processes all unattended lessons across all courses
-- Iterates courses → fetches lessons → filters unattended → submits attendance records
+- Iterates courses → fetches lessons → filters unattended → submits attendance records (dual-call pattern)
 - 500ms delay between submissions (rate-limit guard)
-- Persists event log + updates dashboard state in KV
+- Uses `c.executionCtx.waitUntil()` for non-blocking KV persistence of event log + dashboard state
 - Returns `{ success, results[], logs[], summary }`
 
 ### `web/src/routes/sync.ts` — CLI Sync Receiver
 - `POST /api/sync` → Receives CLI state updates (action, timestamp, courses)
 - Updates dashboard state + appends to event log (max 50 events)
+- Uses `c.executionCtx.waitUntil()` for non-blocking KV writes
 - Used by CLI `sync.ts` after each command
 
 ## Scripts
