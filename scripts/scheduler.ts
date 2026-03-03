@@ -1,7 +1,7 @@
 import '../src/config.js';
 
-const SCHEDULE_HOUR = 8;
-const SCHEDULE_MINUTE = 50;
+const SCHEDULE_HOUR = 17;
+const SCHEDULE_MINUTE = 0;
 
 function getNextRun(): Date {
   const now = new Date();

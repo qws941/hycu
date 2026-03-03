@@ -36,7 +36,7 @@ services:
     environment:
       TZ: Asia/Seoul
       WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_POLL_INTERVAL: "30"
       WATCHTOWER_LABEL_ENABLE: "false"
       WATCHTOWER_SCOPE: hycu
     volumes:
