@@ -1,0 +1,23 @@
+# Environment / Secrets
+.env
+.env.*
+
+# Node
+node_modules/
+dist/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Session data
+cookies/
+*.cookies.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

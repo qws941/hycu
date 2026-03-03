@@ -1,0 +1,37 @@
+import "dotenv/config";
+import { resolve } from "node:path";
+
+export const config = {
+  userId: env("HYCU_USER_ID"),
+  userName: env("HYCU_USER_NAME"),
+
+  fido: {
+    keyId: env("FIDO_KEY_ID"),
+    alg: env("FIDO_ALG"),
+    prikey: env("FIDO_PRIKEY"),
+    fingerprint: env("FIDO_FINGERPRINT"),
+    multi: env("FIDO_MULTI"),
+    type: env("FIDO_TYPE"),
+    pin: env("FIDO_PIN"),
+    keyStoreJson: env("FIDO_KEYSTORE_JSON"),
+  },
+
+  urls: {
+    road: "https://road.hycu.ac.kr",
+    sso: "https://sso.hycu.ac.kr",
+    idp: "https://idp.hycu.ac.kr",
+    lms: "https://lms.hycu.ac.kr",
+    fido: "https://fido.hycu.ac.kr:28444",
+  },
+
+  paths: {
+    cookies: resolve("cookies"),
+    cookieFile: resolve("cookies", "session.json"),
+  },
+} as const;
+
+function env(key: string): string {
+  const val = process.env[key];
+  if (!val) throw new Error(`Missing env var: ${key}`);
+  return val;
+}
