@@ -10,6 +10,7 @@
     "login": "tsx src/index.ts login",
     "attend": "tsx src/index.ts attend",
     "status": "tsx src/index.ts status",
+    "api-attend": "tsx src/index.ts api-attend",
     "dashboard:dev": "npm run dev --prefix web",
     "dashboard:deploy": "npm run deploy --prefix web",
     "push-cookies": "tsx scripts/push-cookies.ts"

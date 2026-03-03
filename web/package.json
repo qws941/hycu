@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "build": "esbuild src/index.ts --bundle --outfile=public/_worker.js --format=esm --target=es2022 --platform=neutral --conditions=worker --minify",
+    "dev": "npm run build && wrangler pages dev public --kv HYCU_KV",
+    "deploy": "npm run build && wrangler pages deploy public --project-name hycu",
     "kv:create": "wrangler kv namespace create HYCU_KV",
-    "secret:set": "wrangler secret put API_KEY"
+    "secret:set": "wrangler pages secret put API_KEY --project-name hycu"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250214.0",
+    "esbuild": "^0.27.3",
     "typescript": "^5.7.0",
     "wrangler": "^4.0.0"
   },

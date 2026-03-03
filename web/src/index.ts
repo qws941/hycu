@@ -31,6 +31,17 @@ app.route('/api/status', status);
 app.route('/api/attend', attend);
 app.route('/api/sync', sync);
 
+// Fallback: serve static assets via Pages ASSETS binding
+app.get('*', async (c) => {
+  try {
+    const response = await c.env.ASSETS.fetch(c.req.raw);
+    if (response.status !== 404) return response;
+  } catch {
+    // ASSETS not available (e.g. wrangler dev without pages)
+  }
+  return c.json({ error: 'Not Found' }, 404);
+});
+
 export default {
   fetch: app.fetch,
 

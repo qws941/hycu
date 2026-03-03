@@ -20,6 +20,13 @@ async function main() {
       await syncAttend({ action: 'attend', timestamp: new Date().toISOString(), success: true, message: 'Attendance completed' });
       break;
     }
+    case "api-attend": {
+      const { apiAttend } = await import("./api-attend.js");
+      await apiAttend();
+      const { syncToDashboard: syncApiAttend } = await import("./sync.js");
+      await syncApiAttend({ action: 'attend', timestamp: new Date().toISOString(), success: true, message: 'API attendance completed' });
+      break;
+    }
     case "status": {
       const { status } = await import("./status.js");
       const courses = await status();
@@ -29,7 +36,7 @@ async function main() {
     }
     default:
       console.error(`Unknown command: ${command}`);
-      console.error("Usage: hycu [login|attend|status]");
+      console.error("Usage: hycu [login|attend|api-attend|status]");
       process.exit(1);
   }
 }

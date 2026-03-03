@@ -2,6 +2,7 @@ export interface Env {
   HYCU_KV: KVNamespace;
   API_KEY: string;
   HYCU_USER_ID: string;
+  ASSETS: Fetcher;
 }
 
 export type AppEnv = { Bindings: Env };

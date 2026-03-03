@@ -1,11 +1,7 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "hycu"
 compatibility_date = "2025-03-01"
-main = "src/index.ts"
-
-[assets]
-directory = "public"
-not_found_handling = "single-page-application"
+pages_build_output_dir = "public"
 
 [[kv_namespaces]]
 binding = "HYCU_KV"
@@ -14,8 +10,14 @@ id = "7c5384c1ab3547aca7d3b29ebedc68c9"
 [vars]
 HYCU_USER_ID = "2024112536"
 
-# Secrets (set via CLI):
-#   wrangler secret put API_KEY
+# Secrets (set via CF dashboard or CLI):
+#   wrangler pages secret put API_KEY --project-name hycu
 
-[triggers]
-crons = ["0 1 * * 1-5"] # Weekdays 10:00 KST (UTC+9)
+# NOTE: Cron triggers require Workers native deployment.
+# When CF API token is available, switch to Workers mode:
+#   main = "src/index.ts"
+#   [assets]
+#   directory = "public"
+#   not_found_handling = "single-page-application"
+#   [triggers]
+#   crons = ["0 1 * * 1-5"]
