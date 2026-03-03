@@ -9,7 +9,10 @@
     "start": "tsx src/index.ts",
     "login": "tsx src/index.ts login",
     "attend": "tsx src/index.ts attend",
-    "status": "tsx src/index.ts status"
+    "status": "tsx src/index.ts status",
+    "dashboard:dev": "npm run dev --prefix web",
+    "dashboard:deploy": "npm run deploy --prefix web",
+    "push-cookies": "tsx scripts/push-cookies.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

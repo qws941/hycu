@@ -26,6 +26,8 @@ interface PageInfo {
 const LMS = config.urls.lms;
 const ROAD = config.urls.road;
 const USER_NO = config.userId;
+const YEAR = '2026';
+const SEMESTER = '10';
 
 /**
  * Attend pending lectures across all enrolled courses.
@@ -58,13 +60,15 @@ export async function attend(): Promise<void> {
     }
     console.log("[attend] session valid");
 
-    // Discover courses from dashboard
-    const courses = await discoverCourses(page);
+    // Get LMS token and discover courses via API
+    const token = await fetchLmsToken(page);
+    const courses = await discoverCourses(page, token);
     if (courses.length === 0) {
       console.log("[attend] no courses found");
+      await saveCookies(context);
+      await context.browser()?.close();
       return;
     }
-    console.log(`[attend] found ${courses.length} course(s)`);
 
     for (const course of courses) {
       console.log(`
@@ -84,48 +88,71 @@ export async function attend(): Promise<void> {
 }
 
 /**
- * Discover enrolled courses from the main dashboard page.
- * Scrapes the course list from the already-loaded mainView.do.
+ * Fetch LMS auth token from road.hycu.ac.kr.
  */
-async function discoverCourses(page: Page): Promise<CourseInfo[]> {
-  // The dashboard has course cards/links with crsCreCd in data attributes or URLs
-  // Try scraping from the page
-  const courses = await page.evaluate(() => {
-    const results: Array<{ crsCreCd: string; name: string }> = [];
-    // Look for links containing crsCreCd parameter
-    const links = document.querySelectorAll("a[onclick*='crsCreCd']");
-    for (const link of links) {
-      const onclick = link.getAttribute("onclick") || "";
-      const match = onclick.match(/crsCreCd[=:,'\s]+(\d{10,}\w+)/);
-      if (match) {
-        const name =
-          link.textContent?.trim().split("\n")[0]?.trim() || "Unknown";
-        results.push({ crsCreCd: match[1], name });
-      }
-    }
-    // Also check hidden inputs or JS variables
-    if (results.length === 0) {
-      const scripts = document.querySelectorAll("script");
-      for (const s of scripts) {
-        const text = s.textContent || "";
-        const matches = text.matchAll(/crsCreCd["']?\s*[:=]\s*["'](\w+)["']/g);
-        for (const m of matches) {
-          if (m[1] && !results.find((r) => r.crsCreCd === m[1])) {
-            results.push({ crsCreCd: m[1], name: m[1] });
-          }
-        }
-      }
-    }
-    return results;
-  });
+async function fetchLmsToken(page: Page): Promise<string> {
+  const raw = await page.evaluate(async (road) => {
+    const res = await fetch(`${road}/pot/MainCtr/findToken.do`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'gubun=lms',
+    });
+    return res.text();
+  }, ROAD);
 
-  // Deduplicate
-  const seen = new Set<string>();
-  return courses.filter((c) => {
-    if (seen.has(c.crsCreCd)) return false;
-    seen.add(c.crsCreCd);
-    return true;
-  });
+  let token = raw.trim();
+  try {
+    const parsed = JSON.parse(token) as Record<string, unknown>;
+    if (typeof parsed.token === 'string') token = parsed.token;
+  } catch { /* plain text token */ }
+
+  console.log(`[attend] LMS token acquired (${token.length} chars)`);
+  return token;
+}
+
+/**
+ * Discover enrolled courses via selectStdProgressRatio.do API.
+ * Same endpoint used by status.ts — returns courses + progress in one call.
+ */
+async function discoverCourses(page: Page, token: string): Promise<CourseInfo[]> {
+  const result = await page.evaluate(
+    async ({ lms, userNo, year, semester, tk }) => {
+      const qs = new URLSearchParams({
+        year, semester, userNo,
+        progressType: 'C',
+        token: tk,
+      });
+      const res = await fetch(`${lms}/api/selectStdProgressRatio.do?${qs}`, {
+        headers: {
+          accept: 'application/json, text/javascript, */*; q=0.01',
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        credentials: 'omit',
+      });
+      return res.text();
+    },
+    { lms: LMS, userNo: USER_NO, year: YEAR, semester: SEMESTER, tk: token },
+  );
+
+  try {
+    const data = JSON.parse(result) as Record<string, unknown>;
+    const list = Array.isArray(data.returnList)
+      ? (data.returnList as Array<Record<string, unknown>>)
+      : [];
+    return list
+      .map((item) => {
+        const corsUrl = String(item.corsUrl || '');
+        const match = corsUrl.match(/crsCreCd=([^&]+)/);
+        return {
+          crsCreCd: match ? match[1] : '',
+          name: String(item.crsCreNm || ''),
+        };
+      })
+      .filter((c) => c.crsCreCd);
+  } catch {
+    console.error('[attend] course API returned non-JSON:', result.slice(0, 200));
+    return [];
+  }
 }
 
 /**

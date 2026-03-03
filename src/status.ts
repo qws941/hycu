@@ -7,7 +7,7 @@ const USER_NO = config.userId;
 const YEAR = "2026";
 const SEMESTER = "10";
 
-interface CourseProgress {
+export interface CourseProgress {
   name: string;
   crsCreCd: string;
   progressRatio: number;
@@ -20,10 +20,10 @@ interface CourseProgress {
  *
  * 1. Open browser with saved session cookies
  * 2. Fetch LMS token via road.hycu.ac.kr/pot/MainCtr/findToken.do
- * 3. Call LMS APIs to get course list and progress
+ * 3. Call selectStdProgressRatio.do to get courses + progress in one call
  * 4. Display formatted status table
  */
-export async function status(): Promise<void> {
+export async function status(): Promise<CourseProgress[]> {
   console.log("[status] HYCU LMS Status");
   console.log(`  User: ${USER_NO} (${config.userName})
 `);
@@ -51,21 +51,18 @@ export async function status(): Promise<void> {
     if (!token) {
       console.log("[status] failed to fetch LMS token");
       await context.browser()?.close();
-      return;
+      return [];
     }
     console.log(`[status] LMS token acquired (${token.length} chars)`);
 
-    // Fetch course list
-    const courses = await fetchCourseList(token);
-    if (courses.length === 0) {
-      console.log("[status] no courses found for current semester");
+    // Fetch courses + progress in one call
+    const progress = await fetchCoursesWithProgress(page, token);
+    if (progress.length === 0) {
+      console.log('[status] no courses found for current semester');
       await saveCookies(context);
       await context.browser()?.close();
-      return;
+      return [];
     }
-
-    // Fetch progress for each course
-    const progress = await fetchProgress(token, courses);
 
     // Display results
     console.log("\n" + "=".repeat(70));
@@ -83,8 +80,10 @@ export async function status(): Promise<void> {
     console.log("=".repeat(70));
 
     await saveCookies(context);
+    return progress;
   } catch (err) {
     console.error("[status] failed:", err);
+    return [];
   } finally {
     await context.browser()?.close();
   }
@@ -93,6 +92,7 @@ export async function status(): Promise<void> {
 /**
  * Fetch LMS session token from road.hycu.ac.kr.
  * POST /pot/MainCtr/findToken.do with gubun=lms returns a hex token string.
+ * Must run inside page.evaluate() to include browser cookies.
  */
 async function fetchLmsToken(
   page: import("playwright").Page,
@@ -106,7 +106,12 @@ async function fetchLmsToken(
         body: fd,
       });
       const text = await resp.text();
-      return text.trim();
+      try {
+        const json = JSON.parse(text.trim()) as Record<string, unknown>;
+        return String(json.token || text.trim());
+      } catch {
+        return text.trim();
+      }
     }, ROAD);
 
     if (result && result.length > 20) {
@@ -119,87 +124,67 @@ async function fetchLmsToken(
 }
 
 /**
- * Fetch enrolled course list from LMS API.
+ * Fetch enrolled courses with progress from LMS API.
+ * selectStdProgressRatio.do returns both course list and progress in one call.
+ * HAR-verified params: year, semester, userNo, progressType=C, token
+ * Response fields: crsCreNm (name), progRatio (progress %), corsUrl (contains crsCreCd),
+ *   totWeekCnt, declsNo, userNo
  */
-async function fetchCourseList(
+async function fetchCoursesWithProgress(
+  page: import('playwright').Page,
   token: string,
-): Promise<Array<{ crsCreCd: string; name: string }>> {
+): Promise<CourseProgress[]> {
   try {
-    const params = new URLSearchParams({
-      token,
-      userNo: USER_NO,
-      year: YEAR,
-      semester: SEMESTER,
-    });
-    const url = `${LMS}/api/wholeNoticeLessionList.do?${params}`;
-    const resp = await fetch(url);
-    const data = (await resp.json()) as Record<string, unknown>;
+    const result = await page.evaluate(
+      async ({ lms, userNo, year, semester, tk }) => {
+        const qs = new URLSearchParams({
+          year,
+          semester,
+          userNo,
+          progressType: 'C',
+          token: tk,
+        });
+        const res = await fetch(`${lms}/api/selectStdProgressRatio.do?${qs}`, {
+          headers: {
+            accept: 'application/json, text/javascript, */*; q=0.01',
+            'content-type': 'application/x-www-form-urlencoded',
+          },
+          credentials: 'omit',
+        });
+        const text = await res.text();
+        return { status: res.status, url: res.url, body: text };
+      },
+      { lms: LMS, userNo: USER_NO, year: YEAR, semester: SEMESTER, tk: token },
+    );
 
-    // API returns { list: [...] } or similar structure
-    const list = Array.isArray(data)
-      ? data
-      : Array.isArray(data.list)
-        ? (data.list as Array<Record<string, unknown>>)
-        : Array.isArray(data.result)
-          ? (data.result as Array<Record<string, unknown>>)
-          : [];
+    if (result.body.trimStart().startsWith('<')) {
+      console.error('[status] progress API returned HTML (status=%d url=%s)', result.status, result.url);
+      console.error('[status] first 300 chars:', result.body.slice(0, 300));
+      return [];
+    }
 
-    const seen = new Set<string>();
-    return list
-      .filter((item: Record<string, unknown>) => {
-        const code = String(item.crsCreCd || item.crsCd || "");
-        if (!code || seen.has(code)) return false;
-        seen.add(code);
-        return true;
+    const data = JSON.parse(result.body) as Record<string, unknown>;
+    const returnList = Array.isArray(data.returnList)
+      ? (data.returnList as Array<Record<string, unknown>>)
+      : [];
+
+    return returnList
+      .map((item) => {
+        // Extract crsCreCd from corsUrl: '/crs/crsHomeStd.do?crsCreCd=202610CCP06401'
+        const corsUrl = String(item.corsUrl || '');
+        const crsCreCdMatch = corsUrl.match(/crsCreCd=([^&]+)/);
+        const crsCreCd = crsCreCdMatch ? crsCreCdMatch[1] : '';
+        return {
+          name: String(item.crsCreNm || ''),
+          crsCreCd,
+          progressRatio: Number(item.progRatio || 0),
+          attendCount: 0, // not in this API response
+          totalCount: Number(item.totWeekCnt || 0),
+        };
       })
-      .map((item: Record<string, unknown>) => ({
-        crsCreCd: String(item.crsCreCd || item.crsCd || ""),
-        name: String(item.crsNm || item.lessonNm || item.name || "Unknown"),
-      }));
+      .filter((c) => c.crsCreCd);
   } catch (err) {
-    console.error("[status] course list fetch failed:", err);
+    console.error('[status] course+progress fetch failed:', err);
     return [];
   }
-}
-
-/**
- * Fetch progress for each course.
- */
-async function fetchProgress(
-  token: string,
-  courses: Array<{ crsCreCd: string; name: string }>,
-): Promise<CourseProgress[]> {
-  const results: CourseProgress[] = [];
-
-  for (const course of courses) {
-    try {
-      const params = new URLSearchParams({
-        token,
-        userNo: USER_NO,
-        crsCreCd: course.crsCreCd,
-        progressType: "C",
-      });
-      const url = `${LMS}/api/selectStdProgressRatio.do?${params}`;
-      const resp = await fetch(url);
-      const data = (await resp.json()) as Record<string, unknown>;
-
-      results.push({
-        name: course.name,
-        crsCreCd: course.crsCreCd,
-        progressRatio: Number(data.progressRatio || data.prgrRatio || 0),
-        attendCount: Number(data.attendCount || data.atndCnt || 0),
-        totalCount: Number(data.totalCount || data.totalCnt || 0),
-      });
-    } catch {
-      results.push({
-        name: course.name,
-        crsCreCd: course.crsCreCd,
-        progressRatio: 0,
-        attendCount: 0,
-        totalCount: 0,
-      });
-    }
-  }
-
-  return results;
 }

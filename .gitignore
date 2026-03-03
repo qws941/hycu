@@ -21,3 +21,11 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Dev artifacts
+.sisyphus/
+*.png
+sso-dom.html
+sso-forms.json
+# Wrangler local state
+.wrangler/
