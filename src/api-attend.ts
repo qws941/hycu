@@ -132,19 +132,30 @@ async function fetchLessonSchedules(
   const list = (data.returnList ?? data.list ?? (Array.isArray(data) ? data : [])) as Array<
     Record<string, unknown>
   >;
-  return list.map((item) => ({
-    lessonScheduleId: String(item.lessonScheduleId ?? ''),
-    lessonTimeId: String(item.lessonTimeId ?? ''),
-    lessonCntsId: String(item.lessonCntsId ?? ''),
-    title: String(item.lessonScheduleNm ?? item.title ?? ''),
-    pageCount: Number(item.pageCnt ?? 1),
-    attended: item.atndYn === 'Y',
-    progressRatio: Number(item.prgrRatio ?? 0),
-    lbnTm: Number(item.lbnTm ?? 30),
-    lessonStartDt: String(item.lessonStartDt ?? ''),
-    lessonEndDt: String(item.lessonEndDt ?? ''),
-    ltDetmToDtMax: String(item.ltDetmToDtMax ?? ''),
-  }));
+  return list.map((item) => {
+    const times = (item.listLessonTime ?? []) as Array<Record<string, unknown>>;
+    const time0 = times[0] ?? {};
+    const cntsList = (time0.listLessonCnts ?? []) as Array<Record<string, unknown>>;
+    const cnts0 = cntsList[0] ?? {};
+    return {
+      lessonScheduleId: String(item.lessonScheduleId ?? ''),
+      lessonTimeId: String(time0.lessonTimeId ?? item.lessonTimeId ?? ''),
+      lessonCntsId: String(cnts0.lessonCntsId ?? item.lessonCntsId ?? ''),
+      title: String(item.lessonScheduleNm ?? item.title ?? ''),
+      pageCount: Number(cnts0.cntsPageCnt ?? item.pageCnt ?? 1),
+      attended: item.atndYn === 'Y',
+      progressRatio: Number(item.prgrRatio ?? 0),
+      lbnTm: Number(item.lbnTm ?? 30),
+      lessonStartDt: String(item.lessonStartDt ?? ''),
+      lessonEndDt: String(item.lessonEndDt ?? ''),
+      ltDetmToDtMax: String(item.ltDetmToDtMax ?? ''),
+    };
+  });
+}
+
+// Debug: log extracted IDs
+function debugLesson(l: LessonSchedule) {
+  console.log(`    [IDs] scheduleId=${l.lessonScheduleId} timeId=${l.lessonTimeId} cntsId=${l.lessonCntsId} lbnTm=${l.lbnTm} pages=${l.pageCount}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +167,7 @@ function nowHHMMSS(): string {
   const h = String(d.getHours()).padStart(2, '0');
   const m = String(d.getMinutes()).padStart(2, '0');
   const s = String(d.getSeconds()).padStart(2, '0');
-  return `${h}:${m}:${s}`;
+  return `${h}${m}${s}`;
 }
 
 async function postStudyRecord(
@@ -176,7 +187,7 @@ async function postStudyRecord(
       Cookie: lmsCookies,
     },
     body: params.toString(),
-    redirect: 'manual',
+    redirect: 'follow',
   });
   const text = await res.text();
   try {
@@ -200,15 +211,15 @@ async function saveAttendanceRecord(
 
   // Step 0: Open lesson viewer page — initializes server-side study session (HAR-verified)
   const viewUrl = `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lesson.lessonScheduleId}&lessonTimeId=${lesson.lessonTimeId}&lessonCntsIdx=0`;
-  await fetch(viewUrl, {
+  const viewRes = await fetch(viewUrl, {
     method: 'GET',
     headers: {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Referer': `${LMS}/crs/crsHomeStd.do?crsCreCd=${crsCreCd}`,
       Cookie: lmsCookies,
     },
-    redirect: 'manual',
   });
+  // Pre-call: checkStdySchedule.do — initializes server-side study session (HAR-verified)
   // Pre-call: checkStdySchedule.do — initializes server-side study session (HAR-verified)
   const checkRes = await fetch(`${LMS}/lesson/stdy/checkStdySchedule.do`, {
     method: 'POST',
@@ -220,8 +231,8 @@ async function saveAttendanceRecord(
       Cookie: lmsCookies,
     },
     body: new URLSearchParams({ crsCreCd, lessonScheduleId: lesson.lessonScheduleId, stdNo }).toString(),
-    redirect: 'manual',
   });
+  const checkText = await checkRes.text();
   if (!checkRes.ok) {
     return { success: false, message: 'checkStdySchedule failed' };
   }
@@ -241,11 +252,11 @@ async function saveAttendanceRecord(
     studyCnt: '2',
     studyStatusCd: 'STUDY',
     prgrYn: 'Y',
-    studyTotalTm: String(requiredMinutes),
+    studyTotalTm: '0',
     studyAfterTm: '0',
-    studySumTm: String(requiredMinutes),
+    studySumTm: '0',
     pageCnt: String(lesson.pageCount),
-    pageStudyTm: String(requiredMinutes - 1),
+    pageStudyTm: String((requiredMinutes - 1) * 60),
     pageStudyCnt: '2',
     pageAtndYn: 'Y',
     playSpeed: '1',
@@ -258,10 +269,10 @@ async function saveAttendanceRecord(
       lmsCookies,
       new URLSearchParams({
         ...baseParams,
-        studySessionTm: '1',
+        studySessionTm: String(requiredMinutes * 60),
         cntsPlayTm: '0',
-        studySessionLoc: String(requiredMinutes - 1),
-        pageSessionTm: '0',
+        studySessionLoc: String(requiredMinutes * 60),
+        pageSessionTm: String(requiredMinutes * 60),
         cntsRatio: '0',
         pageRatio: '8',
         saveType: 'start',
@@ -285,7 +296,7 @@ async function saveAttendanceRecord(
         Cookie: lmsCookies,
       },
       body: new URLSearchParams({ crsCreCd, lessonScheduleId: lesson.lessonScheduleId, stdNo }).toString(),
-      redirect: 'manual',
+      redirect: 'follow',
     });
     // Call 2: second record — same saveType, updated timing (HAR-verified)
     const playStartDttm2 = nowHHMMSS();
@@ -294,12 +305,12 @@ async function saveAttendanceRecord(
       new URLSearchParams({
         ...baseParams,
         playStartDttm: playStartDttm2,
-        studySessionTm: '2',
-        cntsPlayTm: '1',
-        studySessionLoc: String(requiredMinutes - 5),
-        pageSessionTm: '2',
+        studySessionTm: String(requiredMinutes * 60),
+        cntsPlayTm: String((requiredMinutes - 1) * 60),
+        studySessionLoc: String(requiredMinutes * 60),
+        pageSessionTm: String(requiredMinutes * 60),
         cntsRatio: '0',
-        pageRatio: '9',
+        pageRatio: '55',
         saveType: 'start',
       }),
     );
@@ -373,6 +384,7 @@ export async function apiAttend(): Promise<void> {
     console.log(`[api-attend] 전체 ${lessons.length}개 → 대상 ${pending.length}개`);
 
     for (const lesson of pending) {
+      debugLesson(lesson);
       console.log(`[api-attend]   ${lesson.title} (lbnTm=${lesson.lbnTm}min)...`);
       const result = await saveAttendanceRecord(lmsCookies, course.crsCreCd, lesson);
       console.log(`[api-attend]   → ${result.message}`);

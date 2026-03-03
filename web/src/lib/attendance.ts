@@ -22,19 +22,25 @@ export async function fetchLessonSchedules(
     Record<string, unknown>
   >;
 
-  return list.map((item) => ({
-    lessonScheduleId: String(item.lessonScheduleId ?? ''),
-    lessonTimeId: String(item.lessonTimeId ?? ''),
-    lessonCntsId: String(item.lessonCntsId ?? ''),
-    title: String(item.lessonScheduleNm ?? item.title ?? ''),
-    pageCount: Number(item.pageCnt ?? 1),
-    attended: item.atndYn === 'Y',
-    progressRatio: Number(item.prgrRatio ?? 0),
-    lbnTm: Number(item.lbnTm ?? 30),
-    lessonStartDt: String(item.lessonStartDt ?? ''),
-    lessonEndDt: String(item.lessonEndDt ?? ''),
-    ltDetmToDtMax: String(item.ltDetmToDtMax ?? ''),
-  }));
+  return list.map((item) => {
+    const times = (item.listLessonTime ?? []) as Array<Record<string, unknown>>;
+    const time0 = times[0] ?? {};
+    const cntsList = (time0.listLessonCnts ?? []) as Array<Record<string, unknown>>;
+    const cnts0 = cntsList[0] ?? {};
+    return {
+      lessonScheduleId: String(item.lessonScheduleId ?? ''),
+      lessonTimeId: String(time0.lessonTimeId ?? item.lessonTimeId ?? ''),
+      lessonCntsId: String(cnts0.lessonCntsId ?? item.lessonCntsId ?? ''),
+      title: String(item.lessonScheduleNm ?? item.title ?? ''),
+      pageCount: Number(cnts0.cntsPageCnt ?? item.pageCnt ?? 1),
+      attended: item.atndYn === 'Y',
+      progressRatio: Number(item.prgrRatio ?? 0),
+      lbnTm: Number(item.lbnTm ?? 30),
+      lessonStartDt: String(item.lessonStartDt ?? ''),
+      lessonEndDt: String(item.lessonEndDt ?? ''),
+      ltDetmToDtMax: String(item.ltDetmToDtMax ?? ''),
+    };
+  });
 }
 
 function nowHHMMSS(): string {
@@ -42,7 +48,7 @@ function nowHHMMSS(): string {
   const h = String(d.getHours()).padStart(2, '0');
   const m = String(d.getMinutes()).padStart(2, '0');
   const s = String(d.getSeconds()).padStart(2, '0');
-  return `${h}:${m}:${s}`;
+  return `${h}${m}${s}`;
 }
 
 async function postStudyRecord(
@@ -132,11 +138,11 @@ export async function saveAttendanceRecord(
     studyCnt: '2',
     studyStatusCd: 'STUDY',
     prgrYn: 'Y',
-    studyTotalTm: String(requiredMinutes),
+    studyTotalTm: '0',
     studyAfterTm: '0',
-    studySumTm: String(requiredMinutes),
+    studySumTm: '0',
     pageCnt: String(lesson.pageCount),
-    pageStudyTm: String(requiredMinutes - 1),
+    pageStudyTm: String((requiredMinutes - 1) * 60),
     pageStudyCnt: '2',
     pageAtndYn: 'Y',
     playSpeed: '1',
@@ -147,12 +153,12 @@ export async function saveAttendanceRecord(
     // Call 1: start — initial study record (HAR-verified dual-call pattern)
     const call1Params = new URLSearchParams({
       ...baseParams,
-      studySessionTm: '1',
+      studySessionTm: String(requiredMinutes * 60),
       cntsPlayTm: '0',
-      studySessionLoc: String(requiredMinutes - 1),
-      pageSessionTm: '0',
+      studySessionLoc: String(requiredMinutes * 60),
+      pageSessionTm: String(requiredMinutes * 60),
       cntsRatio: '0',
-      pageRatio: '8',
+      pageRatio: '55',
       saveType: 'start',
     });
 
@@ -177,12 +183,12 @@ export async function saveAttendanceRecord(
     const call2Params = new URLSearchParams({
       ...baseParams,
       playStartDttm: playStartDttm2,
-      studySessionTm: '2',
-      cntsPlayTm: '1',
-      studySessionLoc: String(requiredMinutes - 5),
-      pageSessionTm: '2',
+      studySessionTm: String(requiredMinutes * 60),
+      cntsPlayTm: String((requiredMinutes - 1) * 60),
+      studySessionLoc: String(requiredMinutes * 60),
+      pageSessionTm: String(requiredMinutes * 60),
       cntsRatio: '0',
-      pageRatio: '9',
+      pageRatio: '55',
       saveType: 'start',
     });
 
