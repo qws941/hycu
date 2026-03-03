@@ -66,9 +66,16 @@ export default {
             course.crsCreCd,
             userNo,
           );
-          const unattended = lessons.filter(
-            (l) => !l.attended || l.progressRatio < 100,
-          );
+          const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+          const today = kstNow.toISOString().slice(0, 10).replace(/-/g, '');
+          const unattended = lessons.filter((l) => {
+            if (l.attended && l.progressRatio >= 100) return false;
+            const start = (l.lessonStartDt || '').replace(/[-\s:]/g, '').slice(0, 8);
+            const deadline = (l.ltDetmToDtMax || l.lessonEndDt || '').replace(/[-\s:]/g, '').slice(0, 8);
+            if (start && start > today) return false;
+            if (deadline && deadline < today) return false;
+            return true;
+          });
 
           for (const lesson of unattended) {
             const result = await saveAttendanceRecord(

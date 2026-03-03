@@ -163,14 +163,20 @@ async function postStudyRecord(
   lmsCookies: string,
   params: URLSearchParams,
 ): Promise<{ ok: boolean; result: number; raw: string }> {
+  const crsCreCd = params.get('crsCreCd') || '';
+  const lessonScheduleId = params.get('lessonScheduleId') || '';
+  const lessonTimeId = params.get('lessonTimeId') || '';
   const res = await fetch(`${LMS}/lesson/stdy/saveStdyRecord.do`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
       'X-Requested-With': 'XMLHttpRequest',
+      'Origin': LMS,
+      'Referer': `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lessonScheduleId}&lessonTimeId=${lessonTimeId}`,
       Cookie: lmsCookies,
     },
     body: params.toString(),
+    redirect: 'manual',
   });
   const text = await res.text();
   try {
@@ -190,6 +196,35 @@ async function saveAttendanceRecord(
   const lbnTm = lesson.lbnTm || 30;
   const requiredMinutes = Math.ceil(lbnTm * 0.55);
   const playStartDttm = nowHHMMSS();
+
+
+  // Step 0: Open lesson viewer page — initializes server-side study session (HAR-verified)
+  const viewUrl = `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lesson.lessonScheduleId}&lessonTimeId=${lesson.lessonTimeId}&lessonCntsIdx=0`;
+  await fetch(viewUrl, {
+    method: 'GET',
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Referer': `${LMS}/crs/crsHomeStd.do?crsCreCd=${crsCreCd}`,
+      Cookie: lmsCookies,
+    },
+    redirect: 'manual',
+  });
+  // Pre-call: checkStdySchedule.do — initializes server-side study session (HAR-verified)
+  const checkRes = await fetch(`${LMS}/lesson/stdy/checkStdySchedule.do`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Origin': LMS,
+      'Referer': `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lesson.lessonScheduleId}&lessonTimeId=${lesson.lessonTimeId}`,
+      Cookie: lmsCookies,
+    },
+    body: new URLSearchParams({ crsCreCd, lessonScheduleId: lesson.lessonScheduleId, stdNo }).toString(),
+    redirect: 'manual',
+  });
+  if (!checkRes.ok) {
+    return { success: false, message: 'checkStdySchedule failed' };
+  }
 
   const baseParams = {
     userNo: USER_NO,
@@ -239,18 +274,33 @@ async function saveAttendanceRecord(
     // 2s delay between calls (matches HAR timing)
     await new Promise((r) => setTimeout(r, 2000));
 
-    // Call 2: progress — slightly advanced timing fields (HAR-verified)
+    // Pre-call 2: checkStdySchedule again before second save (HAR-verified)
+    await fetch(`${LMS}/lesson/stdy/checkStdySchedule.do`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Origin': LMS,
+        'Referer': `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lesson.lessonScheduleId}&lessonTimeId=${lesson.lessonTimeId}`,
+        Cookie: lmsCookies,
+      },
+      body: new URLSearchParams({ crsCreCd, lessonScheduleId: lesson.lessonScheduleId, stdNo }).toString(),
+      redirect: 'manual',
+    });
+    // Call 2: second record — same saveType, updated timing (HAR-verified)
+    const playStartDttm2 = nowHHMMSS();
     const r2 = await postStudyRecord(
       lmsCookies,
       new URLSearchParams({
         ...baseParams,
+        playStartDttm: playStartDttm2,
         studySessionTm: '2',
         cntsPlayTm: '1',
-        studySessionLoc: String(requiredMinutes),
+        studySessionLoc: String(requiredMinutes - 5),
         pageSessionTm: '2',
         cntsRatio: '0',
         pageRatio: '9',
-        saveType: 'ing',
+        saveType: 'start',
       }),
     );
 

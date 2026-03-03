@@ -37,9 +37,15 @@ export async function login(): Promise<void> {
 
     // Step 5: Wait for SAML redirects to complete and land on road.hycu.ac.kr
     await waitForLoginCompletion(page);
-    // Step 6: Save cookies for session reuse
+
+    // Step 6: Navigate to LMS to establish lms.hycu.ac.kr cookies
+    console.log('[login] navigating to lms.hycu.ac.kr to establish LMS session...');
+    await page.goto(`${config.urls.lms}/`, { waitUntil: 'networkidle', timeout: 30_000 });
+    console.log('[login] LMS page loaded:', page.url());
+
+    // Step 7: Save cookies for session reuse
     await saveCookies(context);
-    console.log("[login] login complete");
+    console.log('[login] login complete');
   } catch (err) {
     console.error("[login] failed:", err);
     // Take screenshot for debugging
