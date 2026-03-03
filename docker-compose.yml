@@ -1,0 +1,45 @@
+services:
+  # Daemon: scheduled attendance (weekdays 08:50 KST)
+  scheduler:
+    image: ghcr.io/qws941/hycu:latest
+    container_name: hycu-scheduler
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./cookies:/app/cookies
+    environment:
+      TZ: Asia/Seoul
+    entrypoint: ["npx", "tsx", "scripts/scheduler.ts"]
+    command: []
+    labels:
+      - com.centurylinklabs.watchtower.scope=hycu
+
+  # One-shot: manual commands (login, api-attend, status)
+  cli:
+    image: ghcr.io/qws941/hycu:latest
+    profiles: ["cli"]
+    env_file: .env
+    volumes:
+      - ./cookies:/app/cookies
+    environment:
+      TZ: Asia/Seoul
+    # Usage:
+    #   docker compose run --rm cli login
+    #   docker compose run --rm cli api-attend
+    #   docker compose run --rm cli status
+
+  # Auto-update: pulls new images and restarts containers
+  watchtower:
+    image: containrrr/watchtower
+    container_name: hycu-watchtower
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Seoul
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_LABEL_ENABLE: "false"
+      WATCHTOWER_SCOPE: hycu
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - com.centurylinklabs.watchtower.scope=hycu
