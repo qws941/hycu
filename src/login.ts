@@ -22,7 +22,10 @@ export async function login(): Promise<void> {
     console.log("[login] page loaded:", page.url());
     // Step 2: Check if already logged in
     if (await isLoggedIn(page)) {
-      console.log("[login] already logged in, saving cookies");
+      // Visit LMS to refresh lms.hycu.ac.kr cookies before saving
+      console.log('[login] visiting lms.hycu.ac.kr to refresh LMS session...');
+      await page.goto(`${config.urls.lms}/`, { waitUntil: 'networkidle', timeout: 30_000 });
+      console.log('[login] LMS page loaded:', page.url());
       await saveCookies(context);
       await context.browser()?.close();
       return;
