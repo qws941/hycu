@@ -40,13 +40,9 @@ app.post('/', async (c) => {
     savedAt: new Date().toISOString(),
   };
 
-  const valid = await checkSession(session.roadCookies);
-  if (!valid) {
-    return c.json(
-      { error: '세션이 유효하지 않습니다. 쿠키를 확인하세요.' },
-      401,
-    );
-  }
+  // NOTE: checkSession skipped on POST — CF Workers IP triggers SSO redirect
+  // on road.hycu.ac.kr (IP-bound sessions). Cookies are saved as-is;
+  // validity is checked lazily when /api/status or /api/attend uses them.
 
   await saveSession(kv, session);
   return c.json({

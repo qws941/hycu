@@ -18,7 +18,7 @@ export async function fetchLessonSchedules(
   });
 
   const data = (await res.json()) as Record<string, unknown>;
-  const list = (data.list ?? data.result ?? (Array.isArray(data) ? data : [])) as Array<
+  const list = (data.returnList ?? data.list ?? (Array.isArray(data) ? data : [])) as Array<
     Record<string, unknown>
   >;
 

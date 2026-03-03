@@ -14,6 +14,9 @@ interface LessonSchedule {
   title: string;
   pageCount: number;
   attended: boolean;
+  lessonStartDt: string;
+  lessonEndDt: string;
+  ltDetmToDtMax: string;
 }
 
 interface PageInfo {
@@ -178,9 +181,17 @@ async function attendCourse(
     return;
   }
 
-  const pending = schedules.filter((s) => !s.attended);
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const pending = schedules.filter((s) => {
+    if (s.attended) return false;
+    const start = (s.lessonStartDt || '').replace(/[-\s:]/g, '').slice(0, 8);
+    const deadline = (s.ltDetmToDtMax || s.lessonEndDt || '').replace(/[-\s:]/g, '').slice(0, 8);
+    if (start && start > today) return false; // not yet open
+    if (deadline && deadline < today) return false; // past deadline
+    return true;
+  });
   console.log(
-    `[attend] ${schedules.length} lesson(s), ${pending.length} pending`,
+    `[attend] ${schedules.length} total, ${pending.length} open+pending (filtered by date)`
   );
 
   for (const lesson of pending) {
@@ -218,14 +229,19 @@ async function getLessonSchedules(
     { crsCreCd, stdNo, userNo: USER_NO },
   );
 
-  if (apiResult && Array.isArray(apiResult)) {
-    return apiResult.map((item: Record<string, unknown>) => ({
+  const items = apiResult?.returnList ?? (Array.isArray(apiResult) ? apiResult : []);
+  console.log(`[attend] lessonSchedule: ${items.length} items found`);
+  if (items.length > 0) {
+    return items.map((item: Record<string, unknown>) => ({
       lessonScheduleId: String(item.lessonScheduleId || ""),
       lessonTimeId: String(item.lessonTimeId || ""),
       lessonCntsId: String(item.lessonCntsId || ""),
       title: String(item.lessonScheduleNm || item.title || "Lesson"),
       pageCount: Number(item.pageCnt || 1),
       attended: item.atndYn === "Y" || item.prgrRatio === 100,
+      lessonStartDt: String(item.lessonStartDt || ""),
+      lessonEndDt: String(item.lessonEndDt || ""),
+      ltDetmToDtMax: String(item.ltDetmToDtMax || ""),
     }));
   }
 
@@ -260,6 +276,9 @@ async function getLessonSchedules(
           title: row.textContent?.trim().split("\n")[0]?.trim() || schedId,
           pageCount: 1,
           attended: row.textContent?.includes("완료") || false,
+          lessonStartDt: "",
+          lessonEndDt: "",
+          ltDetmToDtMax: "",
         });
       }
     }

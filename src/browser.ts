@@ -10,7 +10,7 @@ import { config } from "./config.js";
 export async function createBrowserContext(): Promise<BrowserContext> {
   mkdirSync(config.paths.cookies, { recursive: true });
 
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     locale: "ko-KR",
     timezoneId: "Asia/Seoul",
