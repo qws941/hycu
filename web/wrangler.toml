@@ -17,5 +17,5 @@ HYCU_USER_ID = "2024112536"
 # Secrets (set via CLI): wrangler secret put API_KEY
 
 [triggers]
-crons = ["50 23 * * 0-4"]
-# UTC 23:50 = KST 08:50 (Mon-Fri: Sun-Thu UTC)
+crons = ["50 23 * * *"]
+# UTC 23:50 daily = KST 08:50 (weekends are no-op: no open lessons)
