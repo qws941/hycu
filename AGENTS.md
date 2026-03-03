@@ -14,7 +14,7 @@ dashboard at `hycu.pages.dev`.
 | Browser | Playwright 1.50 (Chromium, persistent context) — CLI only |
 | Dashboard | Cloudflare Workers + KV (`hycu.pages.dev`) |
 | CLI Entry | `tsx src/index.ts <command>` |
-| CLI Commands | `login`, `attend`, `status` |
+| CLI Commands | `login`, `attend`, `api-attend`, `status` |
 | Workers API | `https://hycu.pages.dev/api/{health,session,status,attend,sync}` |
 | Cron Trigger | `0 23 * * 1-5` (Mon–Fri 08:50 KST) — auto attendance |
 | Build (CLI) | `tsc` → `dist/` |
@@ -28,12 +28,14 @@ dashboard at `hycu.pages.dev`.
 
 ```
 hycu/
-├── src/                        # CLI application source (7 files, flat)
+hycu/
+├── src/                        # CLI application source (8 files, flat)
 │   ├── index.ts                # CLI entry — command router (login/attend/status)
 │   ├── config.ts               # Environment loader, URL constants, FIDO config
 │   ├── browser.ts              # Playwright context factory + cookie persistence
 │   ├── login.ts                # FIDO/PIN SSO authentication flow
 │   ├── attend.ts               # Course discovery + video attendance automation
+│   ├── api-attend.ts            # Pure API attendance (no Playwright, fetch-based)
 │   ├── status.ts               # Course progress display (table output)
 │   └── sync.ts                 # Dashboard sync — POSTs state to CF Pages API
 ├── web/                        # Cloudflare Workers dashboard + serverless API
@@ -62,6 +64,9 @@ hycu/
 │   ├── push-cookies.ts         # Reads CLI cookies → POSTs to /api/session
 │   ├── capture-sso-dom.ts      # SSO diagnostic: DOM capture
 │   └── diagnose-sso*.ts        # SSO diagnostic: v1, v2, v3 iterations
+├── .github/                    # CI/CD
+│   └── workflows/
+│       └── deploy.yml          # GitHub Actions: esbuild bundle + wrangler pages deploy
 ├── data/                       # Reference material (HAR captures, extracted JS)
 │   ├── *.har                   # Network captures from LMS/SSO
 │   └── *.js                    # Extracted site JS for reverse-engineering
@@ -82,6 +87,7 @@ hycu/
 │  tsx src/index.ts <cmd>                                     │
 │    ├── "login"  → login.ts  → SSO FIDO auth → save cookies │
 │    ├── "attend" → attend.ts → Playwright video playback     │
+│    ├── "api-attend" → api-attend.ts → Pure API attendance  │
 │    └── "status" → status.ts → fetch + print table           │
 │         ↓ (each command)                                    │
 │    sync.ts → POST /api/sync → update dashboard state        │
@@ -112,7 +118,7 @@ Every CLI command creates a Playwright persistent browser context via `browser.t
 
 1. CLI `login` creates cookies in `cookies/session.json`
 2. `scripts/push-cookies.ts` reads cookies, groups by domain, POSTs to `/api/session`
-3. Workers validate session against `road.hycu.ac.kr` before saving to KV
+3. Workers save cookies to KV directly (no pre-validation — CF Workers IP triggers SSO redirect)
 4. All API endpoints read session from KV key `session:cookies`
 5. Sessions expire when LMS server invalidates them (redirect to SSO = expired)
 
@@ -147,7 +153,7 @@ Orchestrates the full attendance workflow via Playwright:
 
 1. **Session check**: Navigates to LMS; if redirected to SSO domain → session expired → exit
 2. **Course discovery**: Fetches enrolled courses from road.hycu.ac.kr API
-3. **Lesson filtering**: Identifies unattended lessons (progress < 100%)
+3. **Lesson filtering**: Filters to open weeks (lessonStartDt <= today, ltDetmToDtMax >= today) with progress < 100%
 4. **Lecture playback**:
    - Opens lecture viewer (iframe-based)
    - Sets video playback rate to 2×
@@ -164,6 +170,21 @@ Orchestrates the full attendance workflow via Playwright:
 - Best-effort POST to `HYCU_DASHBOARD_URL/api/sync` after each CLI command
 - Sends action type, success status, and course progress data
 - 10-second timeout; failures are non-fatal (logged to console, never throws)
+
+### `api-attend.ts` — Pure API Attendance (no Playwright)
+Submits attendance records via direct HTTP API calls without browser automation:
+
+1. **Session**: Reads cookies from `cookies/session.json` (Playwright storage state format)
+2. **Token**: Fetches auth token from road.hycu.ac.kr `/pot/MainCtr/findToken.do`
+3. **Courses**: Gets enrolled courses from LMS API
+4. **Lesson filtering**: Same as `attend.ts` — open weeks + not yet attended
+5. **Attendance submission**: HAR-verified dual-call pattern to `saveStdyRecord.do`:
+   - Two sequential POST requests ~2s apart with slightly different timing parameters
+   - `requiredMinutes = Math.ceil(lbnTm * 0.55)` — 55% safety margin over 50% threshold
+   - `result >= 1` treated as success (record saved)
+6. **Speed**: ~15 seconds total for 6 courses (vs ~33 minutes via Playwright video playback)
+
+Usage: `npm run api-attend` (requires prior `npm run login`)
 
 ## Workers Module Details
 
@@ -302,27 +323,20 @@ KV namespace ID: `7c5384c1ab3547aca7d3b29ebedc68c9`
 ```bash
 npm run login         # Establish SSO session (requires PASS verification)
 npm run attend        # Process all unattended lectures via Playwright
+npm run api-attend    # Process via API calls (faster, no browser needed)
 npm run status        # Check progress
 ```
 
-### Push session to Workers
-```bash
-npm run push-cookies  # After login, push cookies to CF Workers KV
-```
-
-### Run attendance (Workers)
-Use the dashboard UI at `hycu.pages.dev` or:
-```bash
-curl -X POST https://hycu.pages.dev/api/attend \
-  -H "Authorization: Bearer $HYCU_API_KEY"
-```
 
 ### Deploy dashboard
+Deploys automatically via GitHub Actions on push to `web/**`.
+Manual deploy:
 ```bash
 npm run dashboard:deploy
-# or manually:
-cd web && npx wrangler deploy
 ```
+
+
+### Change semester
 
 ### Change semester
 Update `YEAR` and `SEMESTER` constants in **both**:
@@ -331,6 +345,13 @@ Update `YEAR` and `SEMESTER` constants in **both**:
 
 ### Debug SSO issues
 Use scripts in `scripts/` — they capture DOM state and diagnose SSO flow failures.
+
+### Run attendance (API-only, no Playwright)
+```bash
+npm run login         # Establish session first
+npm run api-attend    # Submit attendance via API (~15 seconds)
+npm run push-cookies  # Push session to Workers
+```
 
 ## Conventions
 
@@ -351,8 +372,10 @@ Use scripts in `scripts/` — they capture DOM state and diagnose SSO flow failu
 5. **Network timeouts**: SAML redirect chain uses 30s timeout; slow SSO server can cause false failures.
 6. **Video playback detection** (CLI only): Relies on `saveStdyRecord.do` response format — LMS API changes break completion detection.
 7. **Attendance parameters**: `saveStdyRecord.do` requires precise field set including `lbnTm`, `studyCnt`, `playStartDttm`. Missing fields cause silent failures (HTTP 200 but no attendance recorded).
-8. **Workers session validation**: `checkSession()` makes a real HTTP request to `road.hycu.ac.kr` on every `GET /api/session` and `POST /api/session`. This adds latency and can fail if Road is down.
+8. **Workers session validation**: POST `/api/session` saves cookies without pre-validation (CF Workers IP triggers SSO redirect on road.hycu.ac.kr). GET `/api/session` still validates by hitting Road API — may fail if Road is down.
 9. **KV eventual consistency**: Dashboard state updates via KV are eventually consistent. Rapid successive writes may lose data.
 10. **Rate limiting**: Workers attendance uses 500ms delay between submissions. Too aggressive and LMS may reject requests.
 11. **Dashboard sync failures** (CLI): Sync is best-effort; network issues or invalid API key silently fail. Check console output for sync error messages.
 12. **Dual constant maintenance**: URL constants and year/semester exist in both `src/config.ts` (CLI) and `web/src/lib/constants.ts` (Workers). Changes must be synchronized.
+13. **GitHub Actions deploy**: Workflow at `.github/workflows/deploy.yml` requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. Token must have Pages:Edit + Workers Scripts:Edit + KV Storage:Edit permissions.
+14. **api-attend vs attend**: `api-attend` is faster but relies on exact `saveStdyRecord.do` API parameters. If LMS changes the API, `attend` (Playwright) is the fallback since it uses real browser playback.
