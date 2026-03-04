@@ -2,7 +2,7 @@
 
 Automates HYCU University LMS (`lms.hycu.ac.kr`) lecture attendance.
 Runs as a **Docker container** on Synology NAS with scheduled attendance
-(weekdays 08:50 KST) and CLI commands for manual operations.
+(weekdays 17:00 KST) and CLI commands for manual operations.
 
 ## Quick Reference
 
@@ -14,8 +14,8 @@ Runs as a **Docker container** on Synology NAS with scheduled attendance
 | Image | `ghcr.io/qws941/hycu:latest` |
 | CI/CD | GitHub Actions → GHCR → Watchtower auto-pull |
 | CLI Entry | `tsx src/index.ts <command>` |
-| CLI Commands | `login`, `attend`, `api-attend`, `status` |
-| Scheduler | `scripts/scheduler.ts` — weekdays 08:50 KST |
+| CLI Commands | `login`, `attend`, `api-attend`, `status`, `notices` |
+| Scheduler | `scripts/scheduler.ts` — weekdays 17:00 KST |
 | Build | `tsc` → `dist/` |
 | Config | `.env` (dotenv) — credentials + FIDO keys |
 | Session | `cookies/` dir — Playwright storage state (Docker volume) |
@@ -24,8 +24,8 @@ Runs as a **Docker container** on Synology NAS with scheduled attendance
 
 ```
 hycu/
-├── src/                        # Application source (8 files, flat)
-│   ├── index.ts                # CLI entry — command router (login/attend/api-attend/status)
+├── src/                        # Application source (9 files, flat)
+│   ├── index.ts                # CLI entry — command router (login/attend/api-attend/status/notices)
 │   ├── config.ts               # Environment loader, URL constants, FIDO config
 │   ├── browser.ts              # Playwright context factory + cookie persistence
 │   ├── login.ts                # FIDO/PIN SSO authentication flow
@@ -33,8 +33,9 @@ hycu/
 │   ├── api-attend.ts           # Pure API attendance (no Playwright, fetch-based)
 │   ├── status.ts               # Course progress display (table output)
 │   └── sync.ts                 # Dashboard sync — POSTs state to external API
+│   ├── notices.ts              # Exam schedules + course announcements
 ├── scripts/                    # Operational scripts
-│   ├── scheduler.ts            # Node.js timer — weekdays 08:50 KST → login + api-attend
+│   ├── scheduler.ts            # Node.js timer — weekdays 17:00 KST → login + api-attend
 │   ├── capture-sso-dom.ts      # SSO diagnostic: DOM capture
 │   └── diagnose-sso*.ts        # SSO diagnostic: v1, v2, v3 iterations
 ├── .github/                    # CI/CD
@@ -63,7 +64,7 @@ hycu/
 │                                                          │
 │  scheduler (always running)                              │
 │    └── scripts/scheduler.ts                              │
-│        ├── Timer: weekdays 08:50 KST                     │
+│        ├── Timer: weekdays 17:00 KST                     │
 │        ├── login.ts  → SSO FIDO auth → save cookies      │
 │        └── api-attend.ts → Pure API attendance (~15s)     │
 │                                                          │
@@ -73,9 +74,10 @@ hycu/
 │        ├── "attend"     → Playwright video playback       │
 │        ├── "api-attend" → Pure API attendance             │
 │        └── "status"     → fetch + print table             │
+│        ├── "notices"   → exam schedules + announcements   │
 │                                                          │
 │  watchtower (always running)                             │
-│    └── Polls GHCR every 5min for new images              │
+│    └── Polls GHCR every 30s for new images               │
 │        Auto-pulls + restarts scheduler                   │
 │                                                          │
 │  Volume: ./cookies → /app/cookies (shared)               │
@@ -87,7 +89,7 @@ hycu/
 ```
 git push master → GitHub Actions (docker.yml)
   → docker build + push to ghcr.io/qws941/hycu:latest
-  → Watchtower detects new image (5min poll)
+  → Watchtower detects new image (30s poll)
   → Pulls image + restarts scheduler container
 ```
 
@@ -167,9 +169,18 @@ Submits attendance records via direct HTTP API calls without browser automation:
 - Sends action type, success status, and course progress data
 - 10-second timeout; failures are non-fatal (logged to console, never throws)
 
+### `notices.ts` — Exam Schedules & Course Announcements
+Fetches exam schedules, course notices, and academic calendar via LMS APIs:
+
+1. **Exam list**: `POST road.hycu.ac.kr/pot/UserCtr/findAllExamList.do` (yy, tmGbn params)
+2. **Course notices**: `POST lms.hycu.ac.kr/api/selectStuLessonNoticeList.do` (year, semester, userNo, alarmType=NOTICE, token)
+3. **Academic schedule**: `POST api.hycu.ac.kr/uni/api/findSchaffScheList` (JSON: {userId, univGbn}) — wrapped in try/catch (non-JSON responses possible)
+- Reads cookies from `cookies/session.json`, fetches token via Road API
+- Outputs formatted tables to stdout
+
 ### `scripts/scheduler.ts` — Attendance Scheduler
 - Node.js timer-based scheduler (no cron dependency)
-- Schedule: weekdays 08:50 KST
+- Schedule: weekdays 17:00 KST
 - Each run: `login()` → `apiAttend()`
 - `--now` flag: run immediately then schedule next
 - Graceful shutdown on SIGTERM/SIGINT
@@ -186,7 +197,7 @@ Submits attendance records via direct HTTP API calls without browser automation:
 Three services:
 - **scheduler**: runs `scripts/scheduler.ts`, always-on, restarts unless-stopped
 - **cli**: on-demand via `docker compose run --rm cli <command>`, profile `cli`
-- **watchtower**: polls GHCR every 300s, auto-updates scheduler container, scope `hycu`
+- **watchtower**: polls GHCR every 30s, auto-updates scheduler container, scope `hycu`
 
 All services share `./cookies:/app/cookies` volume and `.env` file.
 
@@ -216,7 +227,7 @@ All services share `./cookies:/app/cookies` volume and `.env` file.
 
 ### Run attendance (Docker)
 ```bash
-# Scheduler runs automatically at 08:50 KST weekdays
+# Scheduler runs automatically at 17:00 KST weekdays
 docker compose up -d          # Start scheduler + watchtower
 
 # Manual operations
