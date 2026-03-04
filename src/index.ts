@@ -34,9 +34,14 @@ async function main() {
       await syncStatus({ action: 'status', timestamp: new Date().toISOString(), courses, success: true });
       break;
     }
+    case "notices": {
+      const { notices: showNotices } = await import("./notices.js");
+      await showNotices();
+      break;
+    }
     default:
       console.error(`Unknown command: ${command}`);
-      console.error("Usage: hycu [login|attend|api-attend|status]");
+      console.error("Usage: hycu [login|attend|api-attend|status|notices]");
       process.exit(1);
   }
 }

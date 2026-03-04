@@ -10,7 +10,8 @@
     "login": "tsx src/index.ts login",
     "attend": "tsx src/index.ts attend",
     "status": "tsx src/index.ts status",
-    "api-attend": "tsx src/index.ts api-attend"
+    "api-attend": "tsx src/index.ts api-attend",
+    "notices": "tsx src/index.ts notices"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
