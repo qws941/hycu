@@ -1,0 +1,23 @@
+# Auto Approve Runs
+# SSoT: qws941/.github — synced to all repos
+# Synced via: .github/sync.yml
+# Template: _auto-approve-runs.yml
+#
+# Manual fallback trigger for rerunning action_required/failed workflow runs.
+# Primary automation is handled by n8n webhook (event-driven, external).
+#
+# Required secrets:
+#   - GH_PAT: GitHub Personal Access Token with actions:write
+
+name: Auto Approve Runs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  approve:
+    uses: qws941/.github/.github/workflows/_auto-approve-runs.yml@master
+    secrets: inherit
