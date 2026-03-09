@@ -23,8 +23,8 @@ import {
 const LMS = config.urls.lms;
 const ROAD = config.urls.road;
 const USER_NO = config.userId;
-const YEAR = '2026';
-const SEMESTER = '10';
+const YEAR = config.semester.year;
+const SEMESTER = config.semester.term;
 
 // ---------------------------------------------------------------------------
 // Types

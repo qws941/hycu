@@ -66,8 +66,8 @@ export function cookiesToHeader(cookies: PlaywrightCookie[], domain: string): st
 /** Load cookies and return formatted headers for Road + LMS domains. */
 export async function loadCookieHeaders(): Promise<{ roadCookies: string; lmsCookies: string }> {
   const cookies = await loadCookies();
-  const roadCookies = cookiesToHeader(cookies, 'road.hycu.ac.kr');
-  const lmsCookies = cookiesToHeader(cookies, 'lms.hycu.ac.kr');
+  const roadCookies = cookiesToHeader(cookies, new URL(config.urls.road).hostname);
+  const lmsCookies = cookiesToHeader(cookies, new URL(config.urls.lms).hostname);
 
   if (!roadCookies) {
     throw new SessionExpiredError('Road 쿠키 없음 — npm run login 먼저 실행');

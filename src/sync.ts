@@ -1,3 +1,5 @@
+import { config } from './config.js';
+
 /**
  * Sync module — pushes CLI run results to CF Pages dashboard.
  * Called after login, attend, and status commands.
@@ -19,8 +21,8 @@ interface SyncPayload {
   success?: boolean;
 }
 
-const DASHBOARD_URL = process.env.HYCU_DASHBOARD_URL || 'https://hycu.jclee.me';
-const API_KEY = process.env.HYCU_API_KEY || '';
+const DASHBOARD_URL = config.dashboard.url;
+const API_KEY = config.dashboard.apiKey;
 
 export async function syncToDashboard(payload: SyncPayload): Promise<void> {
   const url = `${DASHBOARD_URL}/api/sync`;

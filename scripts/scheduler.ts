@@ -1,8 +1,8 @@
-import '../src/config.js';
+import { config } from '../src/config.js';
 import { SessionExpiredError, CookieError } from '../src/errors.js';
 
-const SCHEDULE_HOUR = 17;
-const SCHEDULE_MINUTE = 0;
+const SCHEDULE_HOUR = config.schedule.hour;
+const SCHEDULE_MINUTE = config.schedule.minute;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 30_000; // 30 seconds
 
