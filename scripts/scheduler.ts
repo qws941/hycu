@@ -46,7 +46,7 @@ async function syncFailure(error: unknown, attempt: number): Promise<void> {
 }
 
 async function runAttendance(): Promise<void> {
-  console.log(`[scheduler] === Attendance run: ${formatKST(new Date())} ===");
+  console.log(`[scheduler] === Attendance run: ${formatKST(new Date())} ===`);
 
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     try {
