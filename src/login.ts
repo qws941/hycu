@@ -158,11 +158,14 @@ async function performFidoPinLogin(page: Page): Promise<void> {
   //   - Performs FIDO authentication (challenge → sign → verify)
   //   - Sets #loginIdPin value and submits form#loginFormPin
   //   - Form POSTs to /sso/AuthCtr/createRequestPIN.do → SAML flow
-  const loginBtn = page.locator('#pinLoginBtn');
-  await loginBtn.waitFor({ state: 'visible', timeout: 5000 });
-  console.log("[login] clicking #pinLoginBtn...");
-  await loginBtn.click();
-  console.log("[login] login button clicked, waiting for FIDO auth + SAML...");
+  // Call fnLoginPin() directly via JS instead of clicking #pinLoginBtn.
+  // The virtual PIN keyboard overlay intercepts pointer events on the button,
+  // causing Playwright click to timeout. Direct JS call is more reliable.
+  console.log("[login] calling fnLoginPin() directly...");
+  await page.evaluate(() => {
+    (window as any).fnLoginPin();
+  });
+  console.log("[login] fnLoginPin() called, waiting for FIDO auth + SAML...");
 }
 
 /**
