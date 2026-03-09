@@ -12,61 +12,19 @@
  * Usage: npx tsx src/index.ts notices
  */
 
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { config } from './config.js';
+import {
+  loadCookieHeaders,
+  fetchToken,
+  assertNotSessionRedirect,
+  parseJsonResponse,
+} from './cookies.js';
 
 const LMS = config.urls.lms;
 const ROAD = config.urls.road;
 const USER_NO = config.userId;
 const YEAR = '2026';
 const SEMESTER = '10';
-
-// ---------------------------------------------------------------------------
-// Cookie handling (shared pattern with api-attend.ts)
-// ---------------------------------------------------------------------------
-
-interface PlaywrightCookie {
-  name: string;
-  value: string;
-  domain: string;
-}
-
-function cookiesToHeader(cookies: PlaywrightCookie[], domain: string): string {
-  return cookies
-    .filter((c) => c.domain === domain || c.domain === `.${domain}`)
-    .map((c) => `${c.name}=${c.value}`)
-    .join('; ');
-}
-
-async function loadCookies(): Promise<PlaywrightCookie[]> {
-  const raw = await readFile(config.paths.cookieFile, 'utf-8');
-  const parsed = JSON.parse(raw) as
-    | PlaywrightCookie[]
-    | { cookies: PlaywrightCookie[] };
-  return Array.isArray(parsed) ? parsed : parsed.cookies;
-}
-
-// ---------------------------------------------------------------------------
-// Token
-// ---------------------------------------------------------------------------
-
-async function fetchToken(roadCookies: string): Promise<string> {
-  const res = await fetch(`${ROAD}/pot/MainCtr/findToken.do`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: roadCookies,
-    },
-    body: 'gubun=lms',
-  });
-  const raw = (await res.text()).trim();
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof parsed.token === 'string') return parsed.token;
-  } catch { /* raw string token */ }
-  return raw;
-}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,7 +66,8 @@ async function fetchExamList(roadCookies: string): Promise<ExamItem[]> {
     },
     body: `yy=${YEAR}&tmGbn=${SEMESTER}`,
   });
-  const data = (await res.json()) as { allExamList?: ExamItem[] };
+  assertNotSessionRedirect(res);
+  const data = await parseJsonResponse<{ allExamList?: ExamItem[] }>(res, 'fetchExamList');
   return data.allExamList ?? [];
 }
 
@@ -135,10 +94,11 @@ async function fetchNotices(
       token,
     }).toString(),
   });
-  const data = (await res.json()) as {
+  assertNotSessionRedirect(res);
+  const data = await parseJsonResponse<{
     result?: number;
     returnList?: NoticeItem[];
-  };
+  }>(res, 'fetchNotices');
   return data.returnList ?? [];
 }
 
@@ -178,8 +138,9 @@ function printSection(title: string) {
 
 export async function notices(): Promise<void> {
   console.log('[notices] Loading cookies...');
-  const cookies = await loadCookies();
-  const roadCookies = cookiesToHeader(cookies, 'road.hycu.ac.kr');
+
+  // Use shared cookie loading (throws CookieError/SessionExpiredError on failure)
+  const { roadCookies } = await loadCookieHeaders();
 
   console.log('[notices] Fetching token...');
   const token = await fetchToken(roadCookies);

@@ -8,32 +8,19 @@
  * Usage: npx tsx src/index.ts api-attend
  */
 
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { config } from './config.js';
+import {
+  loadCookieHeaders,
+  fetchToken,
+  assertNotSessionRedirect,
+  parseJsonResponse,
+} from './cookies.js';
+import { ApiError, SessionExpiredError } from './errors.js';
 
 const LMS = config.urls.lms;
-const ROAD = config.urls.road;
 const USER_NO = config.userId;
 const YEAR = '2026';
 const SEMESTER = '10';
-
-// ---------------------------------------------------------------------------
-// Cookie handling
-// ---------------------------------------------------------------------------
-
-interface PlaywrightCookie {
-  name: string;
-  value: string;
-  domain: string;
-}
-
-function cookiesToHeader(cookies: PlaywrightCookie[], domain: string): string {
-  return cookies
-    .filter((c) => c.domain === domain || c.domain === `.${domain}`)
-    .map((c) => `${c.name}=${c.value}`)
-    .join('; ');
-}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,29 +50,6 @@ interface LessonSchedule {
 // API functions (pure fetch — same logic as web/src/lib/)
 // ---------------------------------------------------------------------------
 
-async function fetchToken(roadCookies: string): Promise<string> {
-  const res = await fetch(`${ROAD}/pot/MainCtr/findToken.do`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: roadCookies,
-    },
-    body: 'gubun=lms',
-  });
-  const raw = (await res.text()).trim();
-  let token = raw;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof parsed.token === 'string') token = parsed.token;
-  } catch {
-    // plain text token — use as-is
-  }
-  if (!token || token.length < 10) {
-    throw new Error(`유효하지 않은 토큰: ${token.substring(0, 50)}`);
-  }
-  return token;
-}
-
 async function fetchCourses(token: string): Promise<CourseInfo[]> {
   const qs = new URLSearchParams({
     year: YEAR,
@@ -97,7 +61,7 @@ async function fetchCourses(token: string): Promise<CourseInfo[]> {
   const res = await fetch(`${LMS}/api/selectStdProgressRatio.do?${qs}`, {
     headers: { 'x-requested-with': 'XMLHttpRequest' },
   });
-  const data = (await res.json()) as Record<string, unknown>;
+  const data = await parseJsonResponse<Record<string, unknown>>(res, 'fetchCourses');
   const list = Array.isArray(data.returnList)
     ? (data.returnList as Array<Record<string, unknown>>)
     : [];
@@ -128,7 +92,7 @@ async function fetchLessonSchedules(
     },
     body: new URLSearchParams({ crsCreCd, stdNo, userNo: USER_NO }).toString(),
   });
-  const data = (await res.json()) as Record<string, unknown>;
+  const data = await parseJsonResponse<Record<string, unknown>>(res, 'fetchLessonSchedules');
   const list = (data.returnList ?? data.list ?? (Array.isArray(data) ? data : [])) as Array<
     Record<string, unknown>
   >;
@@ -189,12 +153,21 @@ async function postStudyRecord(
     body: params.toString(),
     redirect: 'follow',
   });
+
+  assertNotSessionRedirect(res);
+
   const text = await res.text();
+
+  // Detect HTML response (session expired with 200 OK)
+  if (text.trimStart().startsWith('<')) {
+    throw new SessionExpiredError('saveStdyRecord: API가 HTML 반환 (세션 만료)');
+  }
+
   try {
     const json = JSON.parse(text) as Record<string, unknown>;
     return { ok: res.ok, result: Number(json.result ?? 0), raw: text };
   } catch {
-    return { ok: res.ok, result: 0, raw: text };
+    throw new ApiError(`saveStdyRecord: JSON 파싱 실패 — ${text.slice(0, 200)}`);
   }
 }
 
@@ -208,7 +181,6 @@ async function saveAttendanceRecord(
   const requiredMinutes = Math.ceil(lbnTm * 0.55);
   const playStartDttm = nowHHMMSS();
 
-
   // Step 0: Open lesson viewer page — initializes server-side study session (HAR-verified)
   const viewUrl = `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lesson.lessonScheduleId}&lessonTimeId=${lesson.lessonTimeId}&lessonCntsIdx=0`;
   const viewRes = await fetch(viewUrl, {
@@ -219,7 +191,8 @@ async function saveAttendanceRecord(
       Cookie: lmsCookies,
     },
   });
-  // Pre-call: checkStdySchedule.do — initializes server-side study session (HAR-verified)
+  assertNotSessionRedirect(viewRes);
+
   // Pre-call: checkStdySchedule.do — initializes server-side study session (HAR-verified)
   const checkRes = await fetch(`${LMS}/lesson/stdy/checkStdySchedule.do`, {
     method: 'POST',
@@ -232,9 +205,9 @@ async function saveAttendanceRecord(
     },
     body: new URLSearchParams({ crsCreCd, lessonScheduleId: lesson.lessonScheduleId, stdNo }).toString(),
   });
-  const checkText = await checkRes.text();
+  assertNotSessionRedirect(checkRes);
   if (!checkRes.ok) {
-    return { success: false, message: 'checkStdySchedule failed' };
+    return { success: false, message: `checkStdySchedule failed (HTTP ${checkRes.status})` };
   }
 
   const baseParams = {
@@ -263,69 +236,67 @@ async function saveAttendanceRecord(
     playStartDttm,
   };
 
-  try {
-    // Call 1: start — initial study record (HAR-verified)
-    const r1 = await postStudyRecord(
-      lmsCookies,
-      new URLSearchParams({
-        ...baseParams,
-        studySessionTm: String(requiredMinutes * 60),
-        cntsPlayTm: '0',
-        studySessionLoc: String(requiredMinutes * 60),
-        pageSessionTm: String(requiredMinutes * 60),
-        cntsRatio: '0',
-        pageRatio: '8',
-        saveType: 'start',
-      }),
-    );
-    if (!r1.ok) {
-      return { success: false, message: `HTTP error (call 1)` };
-    }
-
-    // 2s delay between calls (matches HAR timing)
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // Pre-call 2: checkStdySchedule again before second save (HAR-verified)
-    await fetch(`${LMS}/lesson/stdy/checkStdySchedule.do`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Origin': LMS,
-        'Referer': `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lesson.lessonScheduleId}&lessonTimeId=${lesson.lessonTimeId}`,
-        Cookie: lmsCookies,
-      },
-      body: new URLSearchParams({ crsCreCd, lessonScheduleId: lesson.lessonScheduleId, stdNo }).toString(),
-      redirect: 'follow',
-    });
-    // Call 2: second record — same saveType, updated timing (HAR-verified)
-    const playStartDttm2 = nowHHMMSS();
-    const r2 = await postStudyRecord(
-      lmsCookies,
-      new URLSearchParams({
-        ...baseParams,
-        playStartDttm: playStartDttm2,
-        studySessionTm: String(requiredMinutes * 60),
-        cntsPlayTm: String((requiredMinutes - 1) * 60),
-        studySessionLoc: String(requiredMinutes * 60),
-        pageSessionTm: String(requiredMinutes * 60),
-        cntsRatio: '0',
-        pageRatio: '55',
-        saveType: 'start',
-      }),
-    );
-
-    // result >= 1 means record saved (HAR-verified: result=1 on success)
-    if (r2.result >= 1) {
-      return { success: true, message: `완료 (result=${r2.result})` };
-    }
-    if (r2.ok) {
-      return { success: true, message: `전송됨 (result=${r2.result})` };
-    }
-    return { success: false, message: `실패 (result=${r2.result})` };
-  } catch (err) {
-    return { success: false, message: `오류: ${err}` };
+  // Call 1: start — initial study record (HAR-verified)
+  const r1 = await postStudyRecord(
+    lmsCookies,
+    new URLSearchParams({
+      ...baseParams,
+      studySessionTm: String(requiredMinutes * 60),
+      cntsPlayTm: '0',
+      studySessionLoc: String(requiredMinutes * 60),
+      pageSessionTm: String(requiredMinutes * 60),
+      cntsRatio: '0',
+      pageRatio: '8',
+      saveType: 'start',
+    }),
+  );
+  if (!r1.ok) {
+    return { success: false, message: `HTTP error (call 1)` };
   }
+
+  // 2s delay between calls (matches HAR timing)
+  await new Promise((r) => setTimeout(r, 2000));
+
+  // Pre-call 2: checkStdySchedule again before second save (HAR-verified)
+  const check2Res = await fetch(`${LMS}/lesson/stdy/checkStdySchedule.do`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Origin': LMS,
+      'Referer': `${LMS}/crs/crsStdLessonView.do?crsCreCd=${crsCreCd}&lessonScheduleId=${lesson.lessonScheduleId}&lessonTimeId=${lesson.lessonTimeId}`,
+      Cookie: lmsCookies,
+    },
+    body: new URLSearchParams({ crsCreCd, lessonScheduleId: lesson.lessonScheduleId, stdNo }).toString(),
+    redirect: 'follow',
+  });
+  assertNotSessionRedirect(check2Res);
+
+  // Call 2: second record — same saveType, updated timing (HAR-verified)
+  const playStartDttm2 = nowHHMMSS();
+  const r2 = await postStudyRecord(
+    lmsCookies,
+    new URLSearchParams({
+      ...baseParams,
+      playStartDttm: playStartDttm2,
+      studySessionTm: String(requiredMinutes * 60),
+      cntsPlayTm: String((requiredMinutes - 1) * 60),
+      studySessionLoc: String(requiredMinutes * 60),
+      pageSessionTm: String(requiredMinutes * 60),
+      cntsRatio: '0',
+      pageRatio: '55',
+      saveType: 'start',
+    }),
+  );
+
+  // result >= 1 means record saved (HAR-verified: result=1 on success)
+  if (r2.result >= 1) {
+    return { success: true, message: `완료 (result=${r2.result})` };
+  }
+  if (r2.ok) {
+    return { success: true, message: `전송됨 (result=${r2.result})` };
+  }
+  return { success: false, message: `실패 (result=${r2.result})` };
 }
 
 // ---------------------------------------------------------------------------
@@ -333,26 +304,11 @@ async function saveAttendanceRecord(
 // ---------------------------------------------------------------------------
 
 export async function apiAttend(): Promise<void> {
-  // 1. Load cookies from Playwright session
-  const cookieFile = resolve('cookies', 'session.json');
-  let raw: string;
-  try {
-    raw = await readFile(cookieFile, 'utf-8');
-  } catch {
-    console.error('[api-attend] 쿠키 파일 없음. npm run login 먼저 실행');
-    return;
-  }
-  const cookies = JSON.parse(raw) as PlaywrightCookie[];
-  const roadCookies = cookiesToHeader(cookies, 'road.hycu.ac.kr');
-  const lmsCookies = cookiesToHeader(cookies, 'lms.hycu.ac.kr');
-
-  if (!roadCookies || !lmsCookies) {
-    console.error('[api-attend] 쿠키 없음. npm run login 먼저 실행');
-    return;
-  }
+  // 1. Load cookies from Playwright session (throws CookieError/SessionExpiredError)
+  const { roadCookies, lmsCookies } = await loadCookieHeaders();
   console.log('[api-attend] 쿠키 로드 완료');
 
-  // 2. Get auth token + course list
+  // 2. Get auth token + course list (throws SessionExpiredError on expiry)
   const token = await fetchToken(roadCookies);
   console.log(`[api-attend] 토큰 획득: ${token.substring(0, 20)}...`);
 

@@ -1,7 +1,10 @@
 import '../src/config.js';
+import { SessionExpiredError, CookieError } from '../src/errors.js';
 
 const SCHEDULE_HOUR = 17;
 const SCHEDULE_MINUTE = 0;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 30_000; // 30 seconds
 
 function getNextRun(): Date {
   const now = new Date();
@@ -24,23 +27,78 @@ function formatKST(date: Date): string {
   return date.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
 }
 
-async function runAttendance(): Promise<void> {
-  console.log(`[scheduler] === Attendance run: ${formatKST(new Date())} ==="`);
+async function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
+async function syncFailure(error: unknown, attempt: number): Promise<void> {
   try {
-    // Step 1: Refresh session (no-op if still valid)
-    console.log('[scheduler] Checking/refreshing session...');
-    const { login } = await import('../src/login.js');
-    await login();
+    const { syncToDashboard } = await import('../src/sync.js');
+    await syncToDashboard({
+      action: 'attend',
+      timestamp: new Date().toISOString(),
+      success: false,
+      message: `Scheduler failed (attempt ${attempt}): ${error instanceof Error ? error.message : String(error)}`,
+    });
+  } catch {
+    // sync is best-effort
+  }
+}
 
-    // Step 2: Run attendance
-    console.log('[scheduler] Running api-attend...');
-    const { apiAttend } = await import('../src/api-attend.js');
-    await apiAttend();
+async function runAttendance(): Promise<void> {
+  console.log(`[scheduler] === Attendance run: ${formatKST(new Date())} ===");
 
-    console.log('[scheduler] Attendance completed successfully');
-  } catch (err) {
-    console.error('[scheduler] Attendance failed:', err);
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    try {
+      // Step 1: Refresh session
+      console.log(`[scheduler] [attempt ${attempt}] Checking/refreshing session...`);
+      const { login } = await import('../src/login.js');
+      await login();
+
+      // Step 2: Run attendance
+      console.log(`[scheduler] [attempt ${attempt}] Running api-attend...`);
+      const { apiAttend } = await import('../src/api-attend.js');
+      await apiAttend();
+
+      console.log('[scheduler] Attendance completed successfully');
+
+      // Sync success to dashboard
+      try {
+        const { syncToDashboard } = await import('../src/sync.js');
+        await syncToDashboard({
+          action: 'attend',
+          timestamp: new Date().toISOString(),
+          success: true,
+          message: 'Scheduled attendance completed',
+        });
+      } catch {
+        // sync is best-effort
+      }
+      return; // success — exit retry loop
+    } catch (err) {
+      const isRetryable = !(err instanceof SessionExpiredError) && !(err instanceof CookieError);
+      const isLastAttempt = attempt > MAX_RETRIES;
+
+      if (err instanceof SessionExpiredError) {
+        console.error(`[scheduler] Session expired: ${err.message}`);
+        console.error('[scheduler] Login should have refreshed — possible FIDO key issue');
+      } else if (err instanceof CookieError) {
+        console.error(`[scheduler] Cookie error: ${err.message}`);
+      } else {
+        console.error(`[scheduler] Attempt ${attempt} failed:`, err);
+      }
+
+      if (isRetryable && !isLastAttempt) {
+        console.log(`[scheduler] Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+        await sleep(RETRY_DELAY_MS);
+        continue;
+      }
+
+      // Final failure — sync to dashboard
+      await syncFailure(err, attempt);
+      console.error(`[scheduler] All attempts exhausted. Next scheduled run will retry.`);
+      return;
+    }
   }
 }
 
@@ -61,6 +119,7 @@ function scheduleNext(): void {
 console.log('[scheduler] HYCU attendance scheduler started');
 console.log(`[scheduler] Schedule: weekdays ${SCHEDULE_HOUR}:${String(SCHEDULE_MINUTE).padStart(2, '0')} KST`);
 console.log(`[scheduler] Current time: ${formatKST(new Date())}`);
+console.log(`[scheduler] Max retries: ${MAX_RETRIES} (${RETRY_DELAY_MS / 1000}s delay)`);
 
 if (process.argv.includes('--now')) {
   console.log('[scheduler] --now flag detected, running immediately');
