@@ -1,0 +1,68 @@
+name: Attendance Automation
+
+on:
+  schedule:
+    - cron: '0 8 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: attendance-automation
+  cancel-in-progress: true
+
+jobs:
+  attend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    env:
+      TZ: Asia/Seoul
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure 1Password
+        uses: 1password/load-secrets-action/configure@v2
+        with:
+          service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          HYCU_USER_ID: op://homelab/hycu/HYCU_USER_ID
+          HYCU_USER_NAME: op://homelab/hycu/HYCU_USER_NAME
+          FIDO_KEY_ID: op://homelab/hycu/FIDO_KEY_ID
+          FIDO_ALG: op://homelab/hycu/FIDO_ALG
+          FIDO_PRIKEY: op://homelab/hycu/FIDO_PRIKEY
+          FIDO_FINGERPRINT: op://homelab/hycu/FIDO_FINGERPRINT
+          FIDO_MULTI: op://homelab/hycu/FIDO_MULTI
+          FIDO_TYPE: op://homelab/hycu/FIDO_TYPE
+          FIDO_PIN: op://homelab/hycu/FIDO_PIN
+          FIDO_KEYSTORE_JSON: op://homelab/hycu/FIDO_KEYSTORE_JSON
+          HYCU_DASHBOARD_URL: op://homelab/hycu/HYCU_DASHBOARD_URL
+          HYCU_API_KEY: op://homelab/hycu/HYCU_API_KEY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Login
+        run: npm run login
+
+      - name: Run attendance
+        run: npm run api-attend

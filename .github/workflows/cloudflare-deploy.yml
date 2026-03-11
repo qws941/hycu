@@ -1,0 +1,97 @@
+name: Cloudflare Deploy
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '*.md'
+      - 'data/**'
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure 1Password
+        uses: 1password/load-secrets-action/configure@v2
+        with:
+          service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          CLOUDFLARE_API_KEY: op://homelab/cloudflare/API Keys/global_api_key
+          CLOUDFLARE_EMAIL: op://homelab/cloudflare/Account/email
+          HYCU_USER_ID: op://homelab/hycu/HYCU_USER_ID
+          HYCU_USER_NAME: op://homelab/hycu/HYCU_USER_NAME
+          FIDO_KEY_ID: op://homelab/hycu/FIDO_KEY_ID
+          FIDO_ALG: op://homelab/hycu/FIDO_ALG
+          FIDO_PRIKEY: op://homelab/hycu/FIDO_PRIKEY
+          FIDO_FINGERPRINT: op://homelab/hycu/FIDO_FINGERPRINT
+          FIDO_MULTI: op://homelab/hycu/FIDO_MULTI
+          FIDO_TYPE: op://homelab/hycu/FIDO_TYPE
+          FIDO_PIN: op://homelab/hycu/FIDO_PIN
+          FIDO_KEYSTORE_JSON: op://homelab/hycu/FIDO_KEYSTORE_JSON
+          HYCU_DASHBOARD_URL: op://homelab/hycu/HYCU_DASHBOARD_URL
+          HYCU_API_KEY: op://homelab/hycu/HYCU_API_KEY
+          HYCU_SERVICE_API_KEY: op://homelab/hycu/HYCU_SERVICE_API_KEY
+          HYCU_RUNTIME_VERSION: op://homelab/hycu/HYCU_RUNTIME_VERSION
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Sync Worker secrets
+        env:
+          HYCU_RUNTIME_VERSION: ${{ github.run_id }}-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          required_keys=(
+            HYCU_USER_ID
+            HYCU_USER_NAME
+            FIDO_KEY_ID
+            FIDO_ALG
+            FIDO_PRIKEY
+            FIDO_FINGERPRINT
+            FIDO_MULTI
+            FIDO_TYPE
+            FIDO_PIN
+            FIDO_KEYSTORE_JSON
+            HYCU_DASHBOARD_URL
+            HYCU_API_KEY
+            HYCU_SERVICE_API_KEY
+            HYCU_RUNTIME_VERSION
+          )
+
+          for key in "${required_keys[@]}"; do
+            value="${!key:-}"
+            if [ -z "$value" ]; then
+              echo "Missing required secret: $key" >&2
+              exit 1
+            fi
+            printf '%s' "$value" | npx wrangler secret put "$key"
+          done
+
+      - name: Deploy to Cloudflare
+        run: npx wrangler deploy

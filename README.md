@@ -117,6 +117,9 @@ cp .env.example .env
 | `SCHEDULE_MINUTE` | No | 스케줄러 실행 분 (기본: `0`) |
 | `HYCU_DASHBOARD_URL` | No | 대시보드 동기화 URL |
 | `HYCU_API_KEY` | No | 대시보드 API 키 |
+| `HYCU_COOKIE_DIR` | No | 쿠키 디렉터리 오버라이드 (`/tmp/hycu-cookies` 같은 서비스 런타임용) |
+| `HYCU_SERVICE_API_KEY` | No | HTTP 서비스 인증 키 (Cloudflare 배포 시 사실상 필수) |
+| `PORT` | No | HTTP 서비스 포트 (기본: `8080`) |
 
 ### Docker (recommended)
 
@@ -138,6 +141,42 @@ npx playwright install --with-deps chromium
 npm run login
 npm run api-attend
 ```
+
+### Cloudflare Containers
+
+이 repo는 기존 NAS/Docker 배포와 별도로 Cloudflare Containers 배포 경로를 지원합니다.
+
+- Worker entry: `cloudflare/worker.js`
+- Cloudflare image: `Dockerfile.cloudflare`
+- Service entry: `src/service-server.ts`
+- Wrangler config: `wrangler.jsonc`
+
+서비스 엔드포인트:
+
+- `GET /healthz`
+- `GET /status`
+- `GET /notices`
+- `POST /api-attend`
+
+`/healthz` 제외 엔드포인트는 `HYCU_SERVICE_API_KEY`를 요구합니다.
+헤더는 `Authorization: Bearer <key>` 또는 `x-api-key: <key>` 둘 다 허용합니다.
+
+Cloudflare용 런타임은 로컬 볼륨 대신 `HYCU_COOKIE_DIR=/tmp/hycu-cookies` 같은
+ephemeral 경로를 사용하며, 세션/쿠키 오류가 나면 서비스가 `login()`을 한 번 수행한 뒤
+요청을 재시도합니다. 별도의 공개 `/login` 엔드포인트는 두지 않습니다.
+
+```bash
+# local validation
+npm run cf:dev
+
+# deploy (requires valid wrangler auth + secrets)
+npm run cf:deploy
+```
+
+Cloudflare 쪽에는 최소한 아래 값들을 Worker secret/var로 설정해야 합니다.
+
+- Secrets: `HYCU_USER_ID`, `HYCU_USER_NAME`, `FIDO_KEY_ID`, `FIDO_ALG`, `FIDO_PRIKEY`, `FIDO_FINGERPRINT`, `FIDO_MULTI`, `FIDO_TYPE`, `FIDO_PIN`, `FIDO_KEYSTORE_JSON`, `HYCU_SERVICE_API_KEY`
+- Optional vars/secrets: `HYCU_YEAR`, `HYCU_SEMESTER`, `HYCU_DASHBOARD_URL`, `HYCU_API_KEY`, `PORT`, `TZ`, `HYCU_COOKIE_DIR`
 
 ## CI/CD
 
