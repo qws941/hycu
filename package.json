@@ -12,6 +12,8 @@
     "status": "tsx src/index.ts status",
     "api-attend": "tsx src/index.ts api-attend",
     "notices": "tsx src/index.ts notices",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy"
   },
@@ -24,6 +26,7 @@
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
+    "vitest": "^4.0.18",
     "wrangler": "^4.72.0"
   }
 }
