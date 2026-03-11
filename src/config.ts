@@ -15,6 +15,8 @@ function optEnv(key: string, fallback: string): string {
   return process.env[key] || fallback;
 }
 
+const cookieDir = optEnv('HYCU_COOKIE_DIR', 'cookies');
+
 /** Auto-detect academic semester from current date. */
 function autoSemester(): { year: string; term: string } {
   const now = new Date();
@@ -62,8 +64,8 @@ export const config = {
   },
 
   paths: {
-    cookies: resolve('cookies'),
-    cookieFile: resolve('cookies', 'session.json'),
+    cookies: resolve(cookieDir),
+    cookieFile: resolve(cookieDir, 'session.json'),
   },
 
   semester: {
@@ -79,5 +81,10 @@ export const config = {
   dashboard: {
     url: optEnv('HYCU_DASHBOARD_URL', 'https://hycu.jclee.me'),
     apiKey: optEnv('HYCU_API_KEY', ''),
+  },
+
+  service: {
+    port: Number(optEnv('PORT', '8080')),
+    apiKey: optEnv('HYCU_SERVICE_API_KEY', ''),
   },
 } as const;
