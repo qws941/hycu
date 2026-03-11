@@ -11,15 +11,19 @@
     "attend": "tsx src/index.ts attend",
     "status": "tsx src/index.ts status",
     "api-attend": "tsx src/index.ts api-attend",
-    "notices": "tsx src/index.ts notices"
+    "notices": "tsx src/index.ts notices",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@cloudflare/containers": "^0.1.1",
     "dotenv": "^16.4.7",
     "playwright": "^1.50.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0",
+    "wrangler": "^4.72.0"
   }
 }
