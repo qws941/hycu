@@ -21,15 +21,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Configure 1Password
-        uses: 1password/load-secrets-action/configure@v2
+        uses: 1password/load-secrets-action/configure@7c9f4da4a32930337a02d32ded1a7e7779841024 # v2.0.0
         with:
           service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+        uses: 1password/load-secrets-action@7c9f4da4a32930337a02d32ded1a7e7779841024 # v2.0.0
         with:
           export-env: true
         env:
@@ -50,7 +50,7 @@ jobs:
           HYCU_SERVICE_API_KEY: op://homelab/hycu/HYCU_SERVICE_API_KEY
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: npm
@@ -62,8 +62,6 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Sync Worker secrets
-        env:
-          HYCU_RUNTIME_VERSION: ${{ github.run_id }}-${{ github.sha }}
         run: |
           set -euo pipefail
           required_keys=(
