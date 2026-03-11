@@ -30,7 +30,7 @@ const SEMESTER = config.semester.term;
 // Types
 // ---------------------------------------------------------------------------
 
-interface ExamItem {
+export interface ExamItem {
   examNm?: string;
   examDt?: string;
   examTm?: string;
@@ -39,7 +39,7 @@ interface ExamItem {
   [key: string]: unknown;
 }
 
-interface NoticeItem {
+export interface NoticeItem {
   atclTitle: string;
   regNm: string;
   regDttm: string;
@@ -47,10 +47,16 @@ interface NoticeItem {
   crsCreCd?: string;
 }
 
-interface AcademicScheduleItem {
+export interface AcademicScheduleItem {
   scheTerm: string;
   schaffScheNm: string;
   linkUrl?: string;
+}
+
+export interface NoticesData {
+  exams: ExamItem[];
+  notices: NoticeItem[];
+  schedule: AcademicScheduleItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +142,7 @@ function printSection(title: string) {
   console.log('='.repeat(60));
 }
 
-export async function notices(): Promise<void> {
+export async function getNoticesData(): Promise<NoticesData> {
   console.log('[notices] Loading cookies...');
 
   // Use shared cookie loading (throws CookieError/SessionExpiredError on failure)
@@ -151,6 +157,13 @@ export async function notices(): Promise<void> {
     fetchNotices(roadCookies, token),
     fetchAcademicSchedule(),
   ]);
+
+  return { exams, notices: noticeList, schedule };
+}
+
+export async function notices(): Promise<NoticesData> {
+  const data = await getNoticesData();
+  const { exams, notices: noticeList, schedule } = data;
 
   // --- Exam Schedule ---
   printSection('시험 일정 (Exam Schedule)');
@@ -200,4 +213,6 @@ export async function notices(): Promise<void> {
   }
 
   console.log();
+
+  return data;
 }

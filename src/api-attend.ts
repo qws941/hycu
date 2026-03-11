@@ -46,6 +46,21 @@ interface LessonSchedule {
   ltDetmToDtMax: string;
 }
 
+export interface AttendanceLessonResult {
+  courseName: string;
+  crsCreCd: string;
+  lessonTitle: string;
+  success: boolean;
+  message: string;
+}
+
+export interface ApiAttendSummary {
+  coursesDiscovered: number;
+  processed: number;
+  succeeded: number;
+  lessons: AttendanceLessonResult[];
+}
+
 // ---------------------------------------------------------------------------
 // API functions (pure fetch — same logic as web/src/lib/)
 // ---------------------------------------------------------------------------
@@ -303,7 +318,7 @@ async function saveAttendanceRecord(
 // Main
 // ---------------------------------------------------------------------------
 
-export async function apiAttend(): Promise<void> {
+export async function apiAttend(): Promise<ApiAttendSummary> {
   // 1. Load cookies from Playwright session (throws CookieError/SessionExpiredError)
   const { roadCookies, lmsCookies } = await loadCookieHeaders();
   console.log('[api-attend] 쿠키 로드 완료');
@@ -321,6 +336,7 @@ export async function apiAttend(): Promise<void> {
 
   let totalProcessed = 0;
   let totalSuccess = 0;
+  const lessonResults: AttendanceLessonResult[] = [];
 
   for (const course of courses) {
     console.log(`\n[api-attend] === ${course.name} (${course.crsCreCd}) ===`);
@@ -346,6 +362,13 @@ export async function apiAttend(): Promise<void> {
       console.log(`[api-attend]   → ${result.message}`);
       totalProcessed++;
       if (result.success) totalSuccess++;
+      lessonResults.push({
+        courseName: course.name,
+        crsCreCd: course.crsCreCd,
+        lessonTitle: lesson.title,
+        success: result.success,
+        message: result.message,
+      });
 
       // 500ms delay between lessons (rate-limit guard)
       await new Promise((r) => setTimeout(r, 500));
@@ -353,4 +376,11 @@ export async function apiAttend(): Promise<void> {
   }
 
   console.log(`\n[api-attend] 완료: ${totalSuccess}/${totalProcessed} 성공`);
+
+  return {
+    coursesDiscovered: courses.length,
+    processed: totalProcessed,
+    succeeded: totalSuccess,
+    lessons: lessonResults,
+  };
 }
