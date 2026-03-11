@@ -8,18 +8,17 @@
 import { readFile } from 'node:fs/promises';
 import { config } from './config.js';
 import { CookieError, SessionExpiredError, ApiError } from './errors.js';
+import {
+  assertNotSessionRedirect,
+  cookiesToHeader,
+  parseJsonResponse,
+  type PlaywrightCookie,
+} from './cookies-core.js';
 
 const ROAD = config.urls.road;
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface PlaywrightCookie {
-  name: string;
-  value: string;
-  domain: string;
-}
+export { assertNotSessionRedirect, cookiesToHeader, parseJsonResponse } from './cookies-core.js';
+export type { PlaywrightCookie } from './cookies-core.js';
 
 // ---------------------------------------------------------------------------
 // Cookie loading
@@ -53,14 +52,6 @@ export async function loadCookies(): Promise<PlaywrightCookie[]> {
   }
 
   return cookies;
-}
-
-/** Extract cookies for a specific domain as a Cookie header string. */
-export function cookiesToHeader(cookies: PlaywrightCookie[], domain: string): string {
-  return cookies
-    .filter((c) => c.domain === domain || c.domain === `.${domain}`)
-    .map((c) => `${c.name}=${c.value}`)
-    .join('; ');
 }
 
 /** Load cookies and return formatted headers for Road + LMS domains. */
@@ -107,50 +98,4 @@ export async function fetchToken(roadCookies: string): Promise<string> {
   }
 
   return token;
-}
-
-// ---------------------------------------------------------------------------
-// Response safety utilities
-// ---------------------------------------------------------------------------
-
-/**
- * Check if a fetch response was redirected to SSO login page.
- * LMS/Road APIs return 200 with HTML body on session expiry instead of 401.
- */
-export function assertNotSessionRedirect(res: Response): void {
-  const url = res.url;
-  if (url.includes('sso.hycu.ac.kr') || url.includes('/Login') || url.includes('login.do')) {
-    throw new SessionExpiredError(`세션 만료 — API 응답이 로그인 페이지로 리다이렉트됨 (${url})`);
-  }
-}
-
-/**
- * Parse a fetch response as JSON with session expiry and HTML detection.
- * Throws SessionExpiredError if response is a login redirect.
- * Throws ApiError if response body is HTML or unparseable.
- */
-export async function parseJsonResponse<T = Record<string, unknown>>(
-  res: Response,
-  context: string,
-): Promise<T> {
-  assertNotSessionRedirect(res);
-
-  if (!res.ok) {
-    throw new ApiError(`${context}: HTTP ${res.status}`, res.status);
-  }
-
-  const text = await res.text();
-
-  // Detect HTML response (session expired returns HTML login page with 200 OK)
-  if (text.trimStart().startsWith('<')) {
-    throw new SessionExpiredError(
-      `${context}: API가 HTML 반환 (세션 만료 가능) — 처음 100자: ${text.slice(0, 100)}`,
-    );
-  }
-
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    throw new ApiError(`${context}: JSON 파싱 실패 — ${text.slice(0, 200)}`);
-  }
 }
