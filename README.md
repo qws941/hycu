@@ -150,6 +150,7 @@ npm run api-attend
 - Cloudflare image: `Dockerfile.cloudflare`
 - Service entry: `src/service-server.ts`
 - Wrangler config: `wrangler.jsonc`
+- Attendance scheduling: Cloudflare cron trigger in the deployed Worker
 
 서비스 엔드포인트:
 
@@ -164,6 +165,10 @@ npm run api-attend
 Cloudflare용 런타임은 로컬 볼륨 대신 `HYCU_COOKIE_DIR=/tmp/hycu-cookies` 같은
 ephemeral 경로를 사용하며, 세션/쿠키 오류가 나면 서비스가 `login()`을 한 번 수행한 뒤
 요청을 재시도합니다. 별도의 공개 `/login` 엔드포인트는 두지 않습니다.
+
+출석 자동화는 GitHub Actions가 아니라 배포된 Cloudflare Worker의 cron 트리거에서 실행됩니다.
+현재 스케줄은 평일 `17:00 KST` (`0 8 * * 1-5` UTC)이며, Worker가 같은 배포 앱 내부에서
+보호된 `POST /api-attend` 경로를 호출합니다.
 
 ```bash
 # local validation

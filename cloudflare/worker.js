@@ -30,11 +30,43 @@ export class HycuContainer extends Container {
   }
 }
 
+async function getHycuContainer(workerEnv) {
+  const runtimeVersion = workerEnv.HYCU_RUNTIME_VERSION || 'runtime-default';
+  const container = getContainer(workerEnv.HYCU_CONTAINER, `hycu-service-${runtimeVersion}`);
+  await container.start();
+  return container;
+}
+
 export default {
   async fetch(request, workerEnv) {
-    const runtimeVersion = workerEnv.HYCU_RUNTIME_VERSION || 'runtime-default';
-    const container = getContainer(workerEnv.HYCU_CONTAINER, `hycu-service-${runtimeVersion}`);
-    await container.start();
+    const container = await getHycuContainer(workerEnv);
     return container.fetch(request);
+  },
+
+  async scheduled(_controller, workerEnv, ctx) {
+    ctx.waitUntil((async () => {
+      if (!workerEnv.HYCU_SERVICE_API_KEY) {
+        throw new Error('HYCU_SERVICE_API_KEY is required for scheduled attendance');
+      }
+
+      const container = await getHycuContainer(workerEnv);
+      const request = new Request('https://hycu.internal/api-attend', {
+        method: 'POST',
+        headers: {
+          'x-api-key': workerEnv.HYCU_SERVICE_API_KEY,
+          'user-agent': 'hycu-cloudflare-cron',
+        },
+      });
+
+      const response = await container.fetch(request);
+      const body = await response.text();
+
+      if (!response.ok) {
+        throw new Error(`Scheduled attendance failed: ${response.status} ${body.slice(0, 500)}`);
+      }
+
+      console.log(`[cron] attendance ok ${response.status}`);
+      console.log(body.slice(0, 500));
+    })());
   },
 };
