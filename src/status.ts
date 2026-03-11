@@ -32,6 +32,15 @@ export interface CourseProgress {
   totalCount: number;
 }
 
+function estimateAttendCount(progressRatio: number, totalCount: number): number {
+  if (totalCount <= 0 || progressRatio <= 0) {
+    return 0;
+  }
+
+  const estimated = Math.round((progressRatio / 100) * totalCount);
+  return Math.min(totalCount, Math.max(0, estimated));
+}
+
 /**
  * Fetch enrolled courses with progress from LMS API.
  * selectStdProgressRatio.do returns both course list and progress in one call.
@@ -63,12 +72,14 @@ async function fetchCoursesWithProgress(
       const corsUrl = String(item.corsUrl || '');
       const crsCreCdMatch = corsUrl.match(/crsCreCd=([^&]+)/);
       const crsCreCd = crsCreCdMatch ? crsCreCdMatch[1] : '';
+      const progressRatio = Number(item.progRatio || 0);
+      const totalCount = Number(item.totWeekCnt || 0);
       return {
         name: String(item.crsCreNm || ''),
         crsCreCd,
-        progressRatio: Number(item.progRatio || 0),
-        attendCount: 0, // not in this API response
-        totalCount: Number(item.totWeekCnt || 0),
+        progressRatio,
+        attendCount: estimateAttendCount(progressRatio, totalCount),
+        totalCount,
       };
     })
     .filter((c) => c.crsCreCd);

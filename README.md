@@ -142,15 +142,19 @@ npm run login
 npm run api-attend
 ```
 
-### Cloudflare Containers
+### Cloudflare Worker + Container
 
-이 repo는 기존 NAS/Docker 배포와 별도로 Cloudflare Containers 배포 경로를 지원합니다.
+이 repo는 기존 NAS/Docker 배포와 별도로 Cloudflare Worker가 제어하고
+Cloudflare Container가 실행하는 네이티브 배포 경로를 지원합니다.
 
-- Worker entry: `cloudflare/worker.js`
-- Cloudflare image: `Dockerfile.cloudflare`
-- Service entry: `src/service-server.ts`
-- Wrangler config: `wrangler.jsonc`
+- Worker control plane: `cloudflare/worker.js`
+- Container runtime: `Dockerfile.cloudflare` -> `src/service-server.ts`
+- Runtime config: `wrangler.jsonc`
 - Attendance scheduling: Cloudflare cron trigger in the deployed Worker
+
+순수 Worker 런타임으로 옮기지 않은 이유는 로그인 경로가 Playwright/Chromium과
+임시 쿠키 파일 시스템에 의존하기 때문입니다. 따라서 Worker는 오케스트레이션만 맡고,
+실제 HYCU 작업은 컨테이너 안의 Node 서비스가 수행합니다.
 
 서비스 엔드포인트:
 
@@ -166,13 +170,18 @@ Cloudflare용 런타임은 로컬 볼륨 대신 `HYCU_COOKIE_DIR=/tmp/hycu-cooki
 ephemeral 경로를 사용하며, 세션/쿠키 오류가 나면 서비스가 `login()`을 한 번 수행한 뒤
 요청을 재시도합니다. 별도의 공개 `/login` 엔드포인트는 두지 않습니다.
 
+`HYCU_RUNTIME_VERSION`를 바꾸면 Worker가 새 컨테이너 인스턴스 키를 사용하므로,
+Cloudflare 쪽 롤아웃/롤백 경계를 명시적으로 나눌 수 있습니다.
+
 출석 자동화는 GitHub Actions가 아니라 배포된 Cloudflare Worker의 cron 트리거에서 실행됩니다.
 현재 스케줄은 평일 `17:00 KST` (`0 8 * * 1-5` UTC)이며, Worker가 같은 배포 앱 내부에서
 보호된 `POST /api-attend` 경로를 호출합니다.
 
 ```bash
 # local validation
+npm run build
 npm run cf:dev
+npm run cf:deploy -- --dry-run
 
 # deploy (requires valid wrangler auth + secrets)
 npm run cf:deploy
@@ -181,14 +190,13 @@ npm run cf:deploy
 Cloudflare 쪽에는 최소한 아래 값들을 Worker secret/var로 설정해야 합니다.
 
 - Secrets: `HYCU_USER_ID`, `HYCU_USER_NAME`, `FIDO_KEY_ID`, `FIDO_ALG`, `FIDO_PRIKEY`, `FIDO_FINGERPRINT`, `FIDO_MULTI`, `FIDO_TYPE`, `FIDO_PIN`, `FIDO_KEYSTORE_JSON`, `HYCU_SERVICE_API_KEY`
-- Optional vars/secrets: `HYCU_YEAR`, `HYCU_SEMESTER`, `HYCU_DASHBOARD_URL`, `HYCU_API_KEY`, `PORT`, `TZ`, `HYCU_COOKIE_DIR`
+- Optional vars/secrets: `HYCU_YEAR`, `HYCU_SEMESTER`, `HYCU_DASHBOARD_URL`, `HYCU_API_KEY`, `PORT`, `TZ`, `HYCU_COOKIE_DIR`, `HYCU_RUNTIME_VERSION`
 
 ## CI/CD
 
-Push to `master` triggers GitHub Actions (`.github/workflows/docker.yml`):
-1. Build Docker image (`node:22-slim` + Playwright Chromium)
-2. Push to `ghcr.io/qws941/hycu:latest`
-3. Watchtower on NAS auto-pulls and restarts
+Push to `master` triggers two deployment pipelines:
+1. `.github/workflows/docker.yml` -> build Docker image (`node:22-slim` + Playwright Chromium), push `ghcr.io/qws941/hycu:latest`, Watchtower on NAS auto-pulls and restarts
+2. `.github/workflows/cloudflare-deploy.yml` -> sync Worker secrets and run `wrangler deploy` for the Worker + Container deployment
 
 ## Semester Config
 
