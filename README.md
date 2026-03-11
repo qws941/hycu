@@ -190,7 +190,7 @@ npm run cf:deploy
 Cloudflare 쪽에는 최소한 아래 값들을 Worker secret/var로 설정해야 합니다.
 
 - Secrets: `HYCU_USER_ID`, `HYCU_USER_NAME`, `FIDO_KEY_ID`, `FIDO_ALG`, `FIDO_PRIKEY`, `FIDO_FINGERPRINT`, `FIDO_MULTI`, `FIDO_TYPE`, `FIDO_PIN`, `FIDO_KEYSTORE_JSON`, `HYCU_SERVICE_API_KEY`
-- Optional vars/secrets: `HYCU_YEAR`, `HYCU_SEMESTER`, `HYCU_DASHBOARD_URL`, `HYCU_API_KEY`, `PORT`, `TZ`, `HYCU_COOKIE_DIR`, `HYCU_RUNTIME_VERSION`
+- Optional vars (managed via wrangler.jsonc): `HYCU_YEAR`, `HYCU_SEMESTER`, `HYCU_DASHBOARD_URL`, `HYCU_API_KEY`, `PORT`, `TZ`, `HYCU_COOKIE_DIR`, `HYCU_RUNTIME_VERSION`
 
 ## CI/CD
 
