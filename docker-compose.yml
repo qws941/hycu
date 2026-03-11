@@ -1,25 +1,4 @@
 services:
-  # Daemon: scheduled attendance (weekdays 08:50 KST)
-  scheduler:
-    image: ghcr.io/qws941/hycu:latest
-    container_name: hycu-scheduler
-    restart: unless-stopped
-    env_file: .env
-    volumes:
-      - ./cookies:/app/cookies
-    environment:
-      TZ: Asia/Seoul
-    entrypoint: ["npx", "tsx", "scripts/scheduler.ts"]
-    command: []
-    labels:
-      - com.centurylinklabs.watchtower.scope=hycu
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'scheduler.ts' || exit 1"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
   # One-shot: manual commands (login, api-attend, status)
   cli:
     image: ghcr.io/qws941/hycu:latest
