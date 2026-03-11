@@ -48,7 +48,6 @@ jobs:
           HYCU_DASHBOARD_URL: op://homelab/hycu/HYCU_DASHBOARD_URL
           HYCU_API_KEY: op://homelab/hycu/HYCU_API_KEY
           HYCU_SERVICE_API_KEY: op://homelab/hycu/HYCU_SERVICE_API_KEY
-          HYCU_RUNTIME_VERSION: op://homelab/hycu/HYCU_RUNTIME_VERSION
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -81,7 +80,6 @@ jobs:
             HYCU_DASHBOARD_URL
             HYCU_API_KEY
             HYCU_SERVICE_API_KEY
-            HYCU_RUNTIME_VERSION
           )
 
           for key in "${required_keys[@]}"; do
