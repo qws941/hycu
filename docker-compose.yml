@@ -13,17 +13,19 @@ services:
     #   docker compose run --rm cli api-attend
     #   docker compose run --rm cli status
 
-  # Long-running: weekday 17:00 KST attendance automation
-  scheduler:
+  # HTTP service: exposes attendance operations for n8n / external orchestrators
+  server:
     image: ghcr.io/qws941/hycu:latest
-    container_name: hycu-scheduler
+    container_name: hycu-server
     restart: unless-stopped
     env_file: .env
     volumes:
       - ./cookies:/app/cookies
     environment:
       TZ: Asia/Seoul
-    entrypoint: ["npx", "tsx", "scripts/scheduler.ts"]
+    entrypoint: ["npx", "tsx", "src/index.ts", "server"]
+    ports:
+      - "8080:8080"
     labels:
       - com.centurylinklabs.watchtower.scope=hycu
 

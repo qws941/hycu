@@ -1,6 +1,6 @@
 {
   "name": "hycu",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "HYCU LMS automation - lecture attendance via Playwright",
@@ -11,7 +11,8 @@
     "attend": "tsx src/index.ts attend",
     "status": "tsx src/index.ts status",
     "api-attend": "tsx src/index.ts api-attend",
-    "notices": "tsx src/index.ts notices"
+    "notices": "tsx src/index.ts notices",
+    "server": "tsx src/index.ts server"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

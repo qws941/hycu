@@ -30,5 +30,8 @@ COPY --from=build /app/tsconfig.json ./
 # Persistent cookie storage
 VOLUME /app/cookies
 
+# HTTP service port (used by 'server' command)
+EXPOSE 8080
+
 ENTRYPOINT ["npx", "tsx", "src/index.ts"]
 CMD ["api-attend"]

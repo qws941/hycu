@@ -40,26 +40,34 @@ async function main() {
       await showNotices();
       break;
     }
+    case 'server': {
+      const { startServer } = await import('./server.js');
+      startServer();
+      return; // server is long-running — don't exit
+    }
     default:
       console.error(`Unknown command: ${command}`);
-      console.error('Usage: hycu [login|attend|api-attend|status|notices]');
+      console.error('Usage: hycu [login|attend|api-attend|status|notices|server]');
       process.exit(1);
   }
 }
 
 main().catch((err: unknown) => {
   if (err instanceof SessionExpiredError) {
-    console.error(`\n[hycu] ❌ 세션 만료: ${err.message}`);
+    console.error(`
+[hycu] ❌ 세션 만료: ${err.message}`);
     console.error('[hycu] → "login" 명령으로 재로그인하세요: npm run login');
     process.exit(2);
   }
   if (err instanceof CookieError) {
-    console.error(`\n[hycu] ❌ 쿠키 오류: ${err.message}`);
+    console.error(`
+[hycu] ❌ 쿠키 오류: ${err.message}`);
     console.error('[hycu] → "login" 명령으로 로그인하세요: npm run login');
     process.exit(2);
   }
   if (err instanceof ApiError) {
-    console.error(`\n[hycu] ❌ API 오류: ${err.message} (HTTP ${err.status})`);
+    console.error(`
+[hycu] ❌ API 오류: ${err.message} (HTTP ${err.status})`);
     process.exit(3);
   }
   // Unknown error
