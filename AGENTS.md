@@ -31,6 +31,8 @@ HYCU LMS automation CLI for login, attendance, status, and notice retrieval. Run
 | FIDO login flow | `src/login.ts` | Injects keyStore into localStorage, calls page JS directly |
 | API attendance | `src/api-attend.ts` | Fast path; HAR-verified dual-call `saveStdyRecord.do` flow |
 | Shared cookie/session guards | `src/cookies.ts` | Cookie loading, token fetch, redirect/HTML expiry detection |
+| Shared LMS API types & fetchers | `src/lms-api.ts` | CourseInfo, LessonSchedule, CourseProgress; shared by status and api-attend |
+| KST date helpers | `src/date.ts` | getTodayKst, normalizeDate, classifyLesson (overdue/pending/attended) |
 | Typed failures | `src/errors.ts` | `SessionExpiredError`, `CookieError`, `ApiError` |
 | Legacy Playwright attendance | `src/attend.ts` | Fallback path; larger and less trustworthy than API flow |
 | Dashboard sync | `src/sync.ts` | Best-effort, non-fatal post-run reporting |
@@ -48,6 +50,8 @@ HYCU LMS automation CLI for login, attendance, status, and notice retrieval. Run
 | `config` in `src/config.ts` | Single source for env vars, URLs, semester, scheduler, dashboard, cookie paths |
 | `login()` in `src/login.ts` | Playwright SSO + FIDO/PIN login, LMS cookie establishment |
 | `apiAttend()` in `src/api-attend.ts` | Primary attendance engine via direct LMS HTTP calls |
+| `fetchCourses()` / `fetchLessonSchedules()` in `src/lms-api.ts` | Shared LMS data fetchers for course list and per-lesson schedules |
+| `getTodayKst()` / `classifyLesson()` in `src/date.ts` | KST date resolution and lesson state classification |
 | `status()` in `src/status.ts` | Fetch-based course progress reporting |
 | `notices()` in `src/notices.ts` | Exams, notices, academic calendar aggregation |
 | `loadCookieHeaders()` / `fetchToken()` in `src/cookies.ts` | Shared session bootstrap for API modules |
