@@ -25,13 +25,12 @@
 │                              1. login (Playwright)  │
 │                              2. api-attend (fetch)  │
 │                                                     │
-│  watchtower ── polls GHCR every 5m ───► auto-update │
 └─────────────────────────────────────────────────────┘
 
 git push master
-  → GitHub Actions builds Docker image
-  → Pushes to ghcr.io/qws941/hycu:latest
-  → Watchtower detects + pulls + restarts
+  → GitHub Actions: typecheck → build Docker image → push GHCR
+  → GitHub Actions: SSH deploy → docker compose pull + up
+  → NAS auto-restarts hycu-scheduler
 ```
 
 ## Architecture
@@ -141,10 +140,23 @@ npm run api-attend
 
 ## CI/CD
 
-Push to `master` triggers `.github/workflows/docker.yml`:
-1. Build Docker image (`node:22-slim` + Playwright Chromium)
-2. Push to `ghcr.io/qws941/hycu:latest`
-3. Watchtower on Synology NAS auto-pulls and restarts containers
+Push to `master` triggers `.github/workflows/docker.yml` (3-job pipeline):
+
+| Job | Trigger | Action |
+|-----|---------|--------|
+| `typecheck` | push + PR | `npm ci && tsc --noEmit` |
+| `build-and-push` | master push | Docker buildx → `ghcr.io/qws941/hycu:latest` |
+| `deploy` | after image push | SSH to NAS → `docker compose pull && up -d` → health check |
+
+**GitHub Environment**: `production-nas`
+
+| Type | Name | Value |
+|------|------|-------|
+| Secret | `NAS_SSH_PASSWORD` | NAS SSH password |
+| Variable | `NAS_HOST` | `192.168.50.215` |
+| Variable | `NAS_USER` | `jclee` |
+| Variable | `NAS_PROJECT_DIR` | `/volume1/homes/jclee/hycu` |
+| Variable | `NAS_DOCKER_BIN` | `/var/packages/ContainerManager/target/usr/bin/docker` |
 
 ## Semester Config
 
