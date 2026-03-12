@@ -1,17 +1,10 @@
 import { config } from './config.js';
+import type { CourseProgress } from './lms-api.js';
 
 /**
  * Sync module — pushes CLI run results to CF Pages dashboard.
  * Called after login, attend, and status commands.
  */
-
-interface CourseProgress {
-  crsCreCd: string;
-  name: string;
-  progressRatio: number;
-  attendCount: number;
-  totalCount: number;
-}
 
 interface SyncPayload {
   action: 'status' | 'attend' | 'login';

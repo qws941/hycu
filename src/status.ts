@@ -1,126 +1,123 @@
-/**
- * status.ts
- *
- * Show current lecture/attendance status.
- * Pure fetch-based — no Playwright dependency.
- *
- * 1. Load cookies from session file
- * 2. Fetch LMS token via road.hycu.ac.kr/pot/MainCtr/findToken.do
- * 3. Call selectStdProgressRatio.do to get courses + progress
- * 4. Display formatted status table
- *
- * Usage: npx tsx src/index.ts status
- */
-
 import { config } from './config.js';
+import { loadCookieHeaders, fetchToken } from './cookies.js';
 import {
-  loadCookieHeaders,
-  fetchToken,
-  parseJsonResponse,
-} from './cookies.js';
+  fetchCourses,
+  fetchLessonSchedules,
+  type CourseProgress,
+  type LessonSchedule,
+  type LessonState,
+} from './lms-api.js';
+import { getTodayKst, classifyLesson } from './date.js';
 
-const LMS = config.urls.lms;
 const USER_NO = config.userId;
-const YEAR = config.semester.year;
-const SEMESTER = config.semester.term;
 
-export interface CourseProgress {
-  name: string;
-  crsCreCd: string;
-  progressRatio: number;
-  attendCount: number;
-  totalCount: number;
-}
-
-function estimateAttendCount(progressRatio: number, totalCount: number): number {
-  if (totalCount <= 0 || progressRatio <= 0) {
-    return 0;
+function formatDeadline(date: string): string {
+  if (date.length < 8) {
+    return '--/--';
   }
-
-  const estimated = Math.round((progressRatio / 100) * totalCount);
-  return Math.min(totalCount, Math.max(0, estimated));
+  return `${date.slice(4, 6)}/${date.slice(6, 8)}`;
 }
 
-/**
- * Fetch enrolled courses with progress from LMS API.
- * selectStdProgressRatio.do returns both course list and progress in one call.
- * HAR-verified params: year, semester, userNo, progressType=C, token
- */
-async function fetchCoursesWithProgress(
-  token: string,
-): Promise<CourseProgress[]> {
-  const qs = new URLSearchParams({
-    year: YEAR,
-    semester: SEMESTER,
-    userNo: USER_NO,
-    progressType: 'C',
-    token,
-  });
-  const res = await fetch(`${LMS}/api/selectStdProgressRatio.do?${qs}`, {
-    headers: {
-      'x-requested-with': 'XMLHttpRequest',
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-  });
-  const data = await parseJsonResponse<Record<string, unknown>>(res, 'fetchCoursesWithProgress');
-  const returnList = Array.isArray(data.returnList)
-    ? (data.returnList as Array<Record<string, unknown>>)
-    : [];
-
-  return returnList
-    .map((item) => {
-      const corsUrl = String(item.corsUrl || '');
-      const crsCreCdMatch = corsUrl.match(/crsCreCd=([^&]+)/);
-      const crsCreCd = crsCreCdMatch ? crsCreCdMatch[1] : '';
-      const progressRatio = Number(item.progRatio || 0);
-      const totalCount = Number(item.totWeekCnt || 0);
-      return {
-        name: String(item.crsCreNm || ''),
-        crsCreCd,
-        progressRatio,
-        attendCount: estimateAttendCount(progressRatio, totalCount),
-        totalCount,
-      };
-    })
-    .filter((c) => c.crsCreCd);
+function renderLessonLine(index: number, lesson: LessonSchedule, state: LessonState): string {
+  if (state === 'attended') {
+    return `  ${index}주차: ✅ 출석완료`;
+  }
+  if (state === 'pending') {
+    const deadline = formatDeadline(lesson.ltDetmToDtMax || lesson.lessonEndDt);
+    return `  ${index}주차: ⏳ 출석대기 (~${deadline} 마감)`;
+  }
+  if (state === 'overdue') {
+    return `  ${index}주차: ❌ 기한초과`;
+  }
+  return `  ${index}주차: 🔒 미개강`;
 }
 
-/**
- * Show current lecture/attendance status.
- * Throws CookieError if session file missing/malformed.
- * Throws SessionExpiredError if cookies expired or token fetch fails.
- */
 export async function status(): Promise<CourseProgress[]> {
   console.log('[status] HYCU LMS Status');
   console.log(`  User: ${USER_NO} (${config.userName})\n`);
 
-  // Load cookies (throws CookieError/SessionExpiredError)
-  const { roadCookies } = await loadCookieHeaders();
+  const { roadCookies, lmsCookies } = await loadCookieHeaders();
 
-  // Get LMS token (throws SessionExpiredError on redirect)
   const token = await fetchToken(roadCookies);
   console.log(`[status] LMS token acquired (${token.length} chars)`);
 
-  // Fetch courses + progress
-  const progress = await fetchCoursesWithProgress(token);
-  if (progress.length === 0) {
+  const courses = await fetchCourses(token);
+  if (courses.length === 0) {
     console.log('[status] no courses found for current semester');
     return [];
   }
 
-  // Display results
-  console.log('\n' + '='.repeat(70));
-  console.log(
-    `  ${''.padEnd(35)} ${''.padStart(8, ' ')}Progress  Attended`,
-  );
-  console.log('='.repeat(70));
+  const today = getTodayKst();
+  const progress: CourseProgress[] = [];
+  const detailRows: Array<{
+    name: string;
+    pending: number;
+    overdue: number;
+    lessons: Array<{ lesson: LessonSchedule; state: LessonState }>;
+  }> = [];
 
-  for (const p of progress) {
-    const name = p.name.length > 35 ? p.name.substring(0, 32) + '...' : p.name;
-    const ratio = `${p.progressRatio}%`.padStart(5);
-    const count = `${p.attendCount}/${p.totalCount}`;
-    console.log(`  ${name.padEnd(35)} ${ratio}     ${count}`);
+  for (const course of courses) {
+    const lessons = await fetchLessonSchedules(lmsCookies, course.crsCreCd);
+    const classified = lessons.map((lesson) => ({
+      lesson,
+      state: classifyLesson(lesson, today),
+    }));
+
+    let attended = 0;
+    let pending = 0;
+    let overdue = 0;
+
+    for (const row of classified) {
+      if (row.state === 'attended') attended += 1;
+      if (row.state === 'pending') pending += 1;
+      if (row.state === 'overdue') overdue += 1;
+    }
+
+    progress.push({
+      name: course.name,
+      crsCreCd: course.crsCreCd,
+      progressRatio: course.progressRatio,
+      attendCount: attended,
+      totalCount: lessons.length,
+    });
+
+    detailRows.push({
+      name: course.name,
+      pending,
+      overdue,
+      lessons: classified,
+    });
   }
+
+  console.log('\n' + '='.repeat(86));
+  console.log(
+    `  ${'과목명'.padEnd(34)} ${'진도율'.padStart(7)}  ${'출석'.padStart(10)}  ${'대기'.padStart(4)}  ${'초과'.padStart(4)}`,
+  );
+  console.log('='.repeat(86));
+
+  for (let i = 0; i < progress.length; i += 1) {
+    const p = progress[i];
+    const d = detailRows[i];
+    const name = p.name.length > 33 ? `${p.name.slice(0, 30)}...` : p.name;
+    const ratio = `${p.progressRatio}%`.padStart(6);
+    const count = `${p.attendCount}/${p.totalCount}`.padStart(10);
+    const pending = String(d.pending).padStart(4);
+    const overdue = String(d.overdue).padStart(4);
+    console.log(`  ${name.padEnd(34)} ${ratio}  ${count}  ${pending}  ${overdue}`);
+  }
+  console.log('='.repeat(86));
+
+  for (const detail of detailRows) {
+    if (detail.pending === 0 && detail.overdue === 0) {
+      continue;
+    }
+
+    console.log(`\n📌 ${detail.name}`);
+    detail.lessons.forEach((row, idx) => {
+      console.log(renderLessonLine(idx + 1, row.lesson, row.state));
+    });
+  }
+
   console.log('='.repeat(70));
 
   return progress;

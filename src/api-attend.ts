@@ -13,39 +13,17 @@ import {
   loadCookieHeaders,
   fetchToken,
   assertNotSessionRedirect,
-  parseJsonResponse,
 } from './cookies.js';
 import { ApiError, SessionExpiredError } from './errors.js';
+import {
+  fetchCourses,
+  fetchLessonSchedules,
+  type LessonSchedule,
+} from './lms-api.js';
+import { classifyLesson, getTodayKst } from './date.js';
 
 const LMS = config.urls.lms;
 const USER_NO = config.userId;
-const YEAR = config.semester.year;
-const SEMESTER = config.semester.term;
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface CourseInfo {
-  crsCreCd: string;
-  name: string;
-  progressRatio: number;
-}
-
-interface LessonSchedule {
-  lessonScheduleId: string;
-  lessonTimeId: string;
-  lessonCntsId: string;
-  title: string;
-  pageCount: number;
-  attended: boolean;
-  progressRatio: number;
-  lbnTm: number;
-  lessonStartDt: string;
-  lessonEndDt: string;
-  ltDetmToDtMax: string;
-}
-
 export interface AttendanceLessonResult {
   courseName: string;
   crsCreCd: string;
@@ -59,77 +37,6 @@ export interface ApiAttendSummary {
   processed: number;
   succeeded: number;
   lessons: AttendanceLessonResult[];
-}
-
-// ---------------------------------------------------------------------------
-// API functions (pure fetch — same logic as web/src/lib/)
-// ---------------------------------------------------------------------------
-
-async function fetchCourses(token: string): Promise<CourseInfo[]> {
-  const qs = new URLSearchParams({
-    year: YEAR,
-    semester: SEMESTER,
-    userNo: USER_NO,
-    progressType: 'C',
-    token,
-  });
-  const res = await fetch(`${LMS}/api/selectStdProgressRatio.do?${qs}`, {
-    headers: { 'x-requested-with': 'XMLHttpRequest' },
-  });
-  const data = await parseJsonResponse<Record<string, unknown>>(res, 'fetchCourses');
-  const list = Array.isArray(data.returnList)
-    ? (data.returnList as Array<Record<string, unknown>>)
-    : [];
-  return list
-    .map((item) => {
-      const corsUrl = String(item.corsUrl || '');
-      const match = corsUrl.match(/crsCreCd=([^&]+)/);
-      return {
-        crsCreCd: match ? match[1] : '',
-        name: String(item.crsCreNm || ''),
-        progressRatio: Number(item.progRatio || 0),
-      };
-    })
-    .filter((c) => c.crsCreCd);
-}
-
-async function fetchLessonSchedules(
-  lmsCookies: string,
-  crsCreCd: string,
-): Promise<LessonSchedule[]> {
-  const stdNo = `${crsCreCd}${USER_NO}`;
-  const res = await fetch(`${LMS}/crs/listCrsHomeLessonSchedule.do`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'X-Requested-With': 'XMLHttpRequest',
-      Cookie: lmsCookies,
-    },
-    body: new URLSearchParams({ crsCreCd, stdNo, userNo: USER_NO }).toString(),
-  });
-  const data = await parseJsonResponse<Record<string, unknown>>(res, 'fetchLessonSchedules');
-  const list = (data.returnList ?? data.list ?? (Array.isArray(data) ? data : [])) as Array<
-    Record<string, unknown>
-  >;
-  return list.map((item) => {
-    const times = (item.listLessonTime ?? []) as Array<Record<string, unknown>>;
-    const time0 = times[0] ?? {};
-    const cntsList = (time0.listLessonCnts ?? []) as Array<Record<string, unknown>>;
-    const cnts0 = cntsList[0] ?? {};
-    return {
-      lessonScheduleId: String(item.lessonScheduleId ?? ''),
-      lessonTimeId: String(time0.lessonTimeId ?? item.lessonTimeId ?? ''),
-      lessonCntsId: String(cnts0.lessonCntsId ?? item.lessonCntsId ?? ''),
-      title: String(item.lessonScheduleNm ?? item.title ?? ''),
-      pageCount: Number(cnts0.cntsPageCnt ?? item.pageCnt ?? 1),
-      attended: item.atndYn === 'Y',
-      progressRatio: Number(item.prgrRatio ?? 0),
-      lbnTm: Number(item.lbnTm ?? 30),
-      lessonStartDt: String(item.lessonStartDt ?? ''),
-      lessonEndDt: String(item.lessonEndDt ?? ''),
-      ltDetmToDtMax: String(item.ltDetmToDtMax ?? ''),
-    };
-  });
 }
 
 // Debug: log extracted IDs
@@ -331,8 +238,7 @@ export async function apiAttend(): Promise<ApiAttendSummary> {
   console.log(`[api-attend] ${courses.length}개 과목 발견`);
 
   // 3. KST date for filtering
-  const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  const today = kstNow.toISOString().slice(0, 10).replace(/-/g, '');
+  const today = getTodayKst();
 
   let totalProcessed = 0;
   let totalSuccess = 0;
@@ -343,14 +249,8 @@ export async function apiAttend(): Promise<ApiAttendSummary> {
 
     const lessons = await fetchLessonSchedules(lmsCookies, course.crsCreCd);
 
-    // Filter: started + not expired + not attended
     const pending = lessons.filter((l) => {
-      if (l.attended) return false;
-      const start = l.lessonStartDt?.replace(/-/g, '') ?? '';
-      const deadline = l.ltDetmToDtMax?.replace(/-/g, '') ?? '';
-      if (start && start > today) return false; // not yet open
-      if (deadline && deadline < today) return false; // past deadline
-      return true;
+      return classifyLesson(l, today) === 'pending';
     });
 
     console.log(`[api-attend] 전체 ${lessons.length}개 → 대상 ${pending.length}개`);
