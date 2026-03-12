@@ -1,13 +1,22 @@
 /**
  * notices.ts
  *
- * Fetches exam schedules, course announcements, and academic calendar
- * from LMS/Road APIs. Pure fetch-based (no Playwright).
+ * Fetches exam schedules, course announcements, assignments, quizzes,
+ * and academic calendar from LMS/Road APIs. Pure fetch-based (no Playwright).
  *
  * Endpoints:
  *   - POST road/pot/UserCtr/findAllExamList.do        — exam schedule
- *   - POST lms/api/selectStuLessonNoticeList.do        — course notices
+ *   - POST lms/api/selectStuLessonNoticeList.do        — course alerts (NOTICE|ASMT|QUIZ|QNA|FORUM)
  *   - POST api.hycu.ac.kr/uni/api/findSchaffScheList   — academic calendar
+ *
+ * alarmType taxonomy (discovered from countStuLessonAlarm.do):
+ *   NOTICE — course announcements
+ *   ASMT   — assignments/homework
+ *   QUIZ   — quizzes
+ *   QNA    — Q&A
+ *   FORUM  — discussion board
+ *   SECRET — private messages
+ *   RESCH  — schedule changes
  *
  * Usage: npx tsx src/index.ts notices
  */
@@ -30,21 +39,42 @@ const SEMESTER = config.semester.term;
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ExamItem {
-  examNm?: string;
-  examDt?: string;
-  examTm?: string;
-  crsNm?: string;
-  crsCreCd?: string;
-  [key: string]: unknown;
-}
+/** LMS alarm types supported by selectStuLessonNoticeList.do */
+type AlarmType = 'NOTICE' | 'ASMT' | 'QUIZ' | 'QNA' | 'FORUM' | 'RESCH';
 
-export interface NoticeItem {
+/** Generic item returned by selectStuLessonNoticeList.do for any alarmType */
+export interface LmsAlarmItem {
   atclTitle: string;
   regNm: string;
   regDttm: string;
   viewLink?: string;
   crsCreCd?: string;
+  crsNm?: string;
+  lessonNo?: string;
+  atclNo?: string;
+  /** Assignment-specific: submission period */
+  submitStartDttm?: string;
+  submitEndDttm?: string;
+  /** Quiz-specific */
+  quizStartDttm?: string;
+  quizEndDttm?: string;
+  [key: string]: unknown;
+}
+
+export interface ExamItem {
+  examNm?: string;
+  examDt?: string;
+  examTm?: string;
+  examGbn?: string;
+  crsNm?: string;
+  crsCreCd?: string;
+  examStartTm?: string;
+  examEndTm?: string;
+  examRoom?: string;
+  examPlace?: string;
+  examPlanCnt?: number;
+  examType?: string;
+  [key: string]: unknown;
 }
 
 export interface AcademicScheduleItem {
@@ -55,8 +85,42 @@ export interface AcademicScheduleItem {
 
 export interface NoticesData {
   exams: ExamItem[];
-  notices: NoticeItem[];
+  notices: LmsAlarmItem[];
+  assignments: LmsAlarmItem[];
+  quizzes: LmsAlarmItem[];
   schedule: AcademicScheduleItem[];
+}
+
+// ---------------------------------------------------------------------------
+// API: LMS alarm list (generic for any alarmType)
+// ---------------------------------------------------------------------------
+
+async function fetchLmsAlarmList(
+  roadCookies: string,
+  token: string,
+  alarmType: AlarmType,
+): Promise<LmsAlarmItem[]> {
+  const res = await fetch(`${LMS}/api/selectStuLessonNoticeList.do`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Cookie: roadCookies,
+      Referer: `${ROAD}/`,
+    },
+    body: new URLSearchParams({
+      year: YEAR,
+      semester: SEMESTER,
+      userNo: USER_NO,
+      alarmType,
+      token,
+    }).toString(),
+  });
+  assertNotSessionRedirect(res);
+  const data = await parseJsonResponse<{
+    result?: number;
+    returnList?: LmsAlarmItem[];
+  }>(res, `fetchLmsAlarmList(${alarmType})`);
+  return data.returnList ?? [];
 }
 
 // ---------------------------------------------------------------------------
@@ -78,37 +142,6 @@ async function fetchExamList(roadCookies: string): Promise<ExamItem[]> {
 }
 
 // ---------------------------------------------------------------------------
-// API: Course notices
-// ---------------------------------------------------------------------------
-
-async function fetchNotices(
-  roadCookies: string,
-  token: string,
-): Promise<NoticeItem[]> {
-  const res = await fetch(`${LMS}/api/selectStuLessonNoticeList.do`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: roadCookies,
-      Referer: `${ROAD}/`,
-    },
-    body: new URLSearchParams({
-      year: YEAR,
-      semester: SEMESTER,
-      userNo: USER_NO,
-      alarmType: 'NOTICE',
-      token,
-    }).toString(),
-  });
-  assertNotSessionRedirect(res);
-  const data = await parseJsonResponse<{
-    result?: number;
-    returnList?: NoticeItem[];
-  }>(res, 'fetchNotices');
-  return data.returnList ?? [];
-}
-
-// ---------------------------------------------------------------------------
 // API: Academic calendar
 // ---------------------------------------------------------------------------
 
@@ -127,91 +160,176 @@ async function fetchAcademicSchedule(): Promise<AcademicScheduleItem[]> {
     };
     return data.result ?? [];
   } catch (err) {
-    console.warn('[notices] 학사 일정 조회 실패:', (err as Error).message);
+    console.warn('[notices] \ud559\uc0ac \uc77c\uc815 \uc870\ud68c \uc2e4\ud328:', (err as Error).message);
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Display helpers
+// ---------------------------------------------------------------------------
+
+function printSection(title: string) {
+  console.log(`
+${'='.repeat(60)}`);
+  console.log(`  ${title}`);
+  console.log('='.repeat(60));
+}
+
+/** Group items by course name, falling back to '\uae30\ud0c0' for unknown courses. */
+function groupByCourse<T extends { crsNm?: string }>(items: T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const course = item.crsNm ?? '\uae30\ud0c0';
+    const list = groups.get(course);
+    if (list) {
+      list.push(item);
+    } else {
+      groups.set(course, [item]);
+    }
+  }
+  return groups;
+}
+
+/** Classify exam by name pattern: \uc911\uac04 \u2192 midterm, \uae30\ub9d0 \u2192 final */
+function examLabel(exam: ExamItem): string {
+  const name = (exam.examNm ?? exam.examGbn ?? '').toLowerCase();
+  if (name.includes('\uc911\uac04')) return '\uc911\uac04\uace0\uc0ac';
+  if (name.includes('\uae30\ub9d0')) return '\uae30\ub9d0\uace0\uc0ac';
+  if (name.includes('quiz') || name.includes('\ud034\uc988')) return '\ud034\uc988';
+  return exam.examNm ?? '\uc2dc\ud5d8';
+}
+
+function formatDate(dttm?: string): string {
+  if (!dttm) return '';
+  // Handle "2026-03-12 14:00:00" or "20260312140000" formats
+  if (dttm.length >= 10) return dttm.slice(0, 10);
+  return dttm;
+}
+
+// ---------------------------------------------------------------------------
+// Data fetching
+// ---------------------------------------------------------------------------
+
+export async function getNoticesData(): Promise<NoticesData> {
+  console.log('[notices] Loading cookies...');
+  const { roadCookies } = await loadCookieHeaders();
+
+  console.log('[notices] Fetching token...');
+  const token = await fetchToken(roadCookies);
+
+  console.log('[notices] Fetching data (exams, notices, assignments, quizzes, calendar)...');
+  const [exams, noticeItems, assignments, quizzes, schedule] = await Promise.all([
+    fetchExamList(roadCookies),
+    fetchLmsAlarmList(roadCookies, token, 'NOTICE'),
+    fetchLmsAlarmList(roadCookies, token, 'ASMT'),
+    fetchLmsAlarmList(roadCookies, token, 'QUIZ'),
+    fetchAcademicSchedule(),
+  ]);
+
+  return { exams, notices: noticeItems, assignments, quizzes, schedule };
 }
 
 // ---------------------------------------------------------------------------
 // Display
 // ---------------------------------------------------------------------------
 
-function printSection(title: string) {
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(`  ${title}`);
-  console.log('='.repeat(60));
+function printExams(exams: ExamItem[]) {
+  printSection('\uc2dc\ud5d8 \uc77c\uc815 (Exam Schedule)');
+  if (exams.length === 0) {
+    console.log('  \ud604\uc7ac \ub4f1\ub85d\ub41c \uc2dc\ud5d8\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.');
+    return;
+  }
+
+  const grouped = groupByCourse(exams);
+  for (const [course, items] of grouped) {
+    console.log(`
+  📚 ${course}`);
+    for (const exam of items) {
+      const label = examLabel(exam);
+      console.log(`     \ud83d\udcdd ${label}`);
+      if (exam.examDt) console.log(`        \ub0a0\uc9dc: ${exam.examDt}`);
+      if (exam.examTm) console.log(`        \uc2dc\uac04: ${exam.examTm}`);
+      if (exam.examStartTm && exam.examEndTm) {
+        console.log(`        \uc2dc\uac04: ${exam.examStartTm} ~ ${exam.examEndTm}`);
+      }
+      if (exam.examRoom || exam.examPlace) {
+        console.log(`        \uc7a5\uc18c: ${exam.examRoom ?? exam.examPlace}`);
+      }
+    }
+  }
 }
 
-export async function getNoticesData(): Promise<NoticesData> {
-  console.log('[notices] Loading cookies...');
+function printAlarmItems(title: string, emoji: string, items: LmsAlarmItem[], maxItems = 30) {
+  printSection(`${title} \u2014 ${items.length}\uac74`);
+  if (items.length === 0) {
+    console.log('  \ub4f1\ub85d\ub41c \ud56d\ubaa9\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.');
+    return;
+  }
 
-  // Use shared cookie loading (throws CookieError/SessionExpiredError on failure)
-  const { roadCookies } = await loadCookieHeaders();
+  const grouped = groupByCourse(items);
+  let shown = 0;
 
-  console.log('[notices] Fetching token...');
-  const token = await fetchToken(roadCookies);
+  for (const [course, courseItems] of grouped) {
+    if (shown >= maxItems) break;
+    console.log(`
+  📚 ${course}`);
+    for (const item of courseItems) {
+      if (shown >= maxItems) break;
+      const date = formatDate(item.regDttm);
+      console.log(`     ${emoji} [${date}] ${item.atclTitle}`);
+      console.log(`        \uc791\uc131\uc790: ${item.regNm}`);
 
-  // Fetch all three in parallel
-  const [exams, noticeList, schedule] = await Promise.all([
-    fetchExamList(roadCookies),
-    fetchNotices(roadCookies, token),
-    fetchAcademicSchedule(),
-  ]);
+      // Assignment deadline info
+      if (item.submitEndDttm) {
+        console.log(`        \uc81c\ucd9c\ub9c8\uac10: ${formatDate(item.submitEndDttm)}`);
+      }
+      // Quiz period info
+      if (item.quizEndDttm) {
+        console.log(`        \uc751\uc2dc\ub9c8\uac10: ${formatDate(item.quizEndDttm)}`);
+      }
+      shown++;
+    }
+  }
 
-  return { exams, notices: noticeList, schedule };
+  if (items.length > maxItems) {
+    console.log(`
+  ... 외 ${items.length - maxItems}건`);
+  }
+}
+
+function printAcademicSchedule(schedule: AcademicScheduleItem[]) {
+  printSection('\ud559\uc0ac \uc77c\uc815 (Academic Calendar)');
+  if (schedule.length === 0) {
+    console.log('  \ud559\uc0ac \uc77c\uc815\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.');
+    return;
+  }
+
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  for (const item of schedule) {
+    const monthStr = item.scheTerm?.slice(0, 2) ?? '';
+    const month = parseInt(monthStr, 10);
+    const marker = month >= currentMonth ? '\u2192' : ' ';
+    console.log(`  ${marker} [${item.scheTerm}] ${item.schaffScheNm}`);
+  }
 }
 
 export async function notices(): Promise<NoticesData> {
   const data = await getNoticesData();
-  const { exams, notices: noticeList, schedule } = data;
 
-  // --- Exam Schedule ---
-  printSection('시험 일정 (Exam Schedule)');
-  if (exams.length === 0) {
-    console.log('  현재 등록된 시험이 없습니다.');
-  } else {
-    for (const exam of exams) {
-      console.log(`  📝 ${exam.examNm ?? exam.crsNm ?? 'Unknown'}`);
-      if (exam.examDt) console.log(`     날짜: ${exam.examDt}`);
-      if (exam.examTm) console.log(`     시간: ${exam.examTm}`);
-      console.log();
-    }
-  }
+  printExams(data.exams);
+  printAlarmItems('\uacfc\uc81c (Assignments)', '\ud83d\udccb', data.assignments);
+  printAlarmItems('\ud034\uc988 (Quizzes)', '\u2753', data.quizzes);
+  printAlarmItems('\uacf5\uc9c0\uc0ac\ud56d (Course Notices)', '\ud83d\udce2', data.notices);
+  printAcademicSchedule(data.schedule);
 
-  // --- Course Notices ---
-  printSection(`공지사항 (Course Notices) — ${noticeList.length}건`);
-  if (noticeList.length === 0) {
-    console.log('  공지사항이 없습니다.');
-  } else {
-    // Group by course if possible
-    const recent = noticeList.slice(0, 20); // Show max 20
-    for (const notice of recent) {
-      const date = notice.regDttm?.slice(0, 10) ?? '';
-      console.log(`  📢 [${date}] ${notice.atclTitle}`);
-      console.log(`     작성자: ${notice.regNm}`);
-    }
-    if (noticeList.length > 20) {
-      console.log(`  ... 외 ${noticeList.length - 20}건`);
-    }
-  }
-
-  // --- Academic Calendar ---
-  printSection('학사 일정 (Academic Calendar)');
-  if (schedule.length === 0) {
-    console.log('  학사 일정이 없습니다.');
-  } else {
-    // Highlight upcoming events (current month and forward)
-    const now = new Date();
-    const currentMonth = now.getMonth() + 1; // 1-based
-    for (const item of schedule) {
-      // scheTerm format: "03.03 ~ 03.03"
-      const monthStr = item.scheTerm?.slice(0, 2) ?? '';
-      const month = parseInt(monthStr, 10);
-      const marker = month >= currentMonth ? '→' : ' ';
-      console.log(`  ${marker} [${item.scheTerm}] ${item.schaffScheNm}`);
-    }
-  }
-
+  console.log(`
+${'─'.repeat(60)}`);
+  console.log(
+    `  \ud569\uacc4: \uc2dc\ud5d8 ${data.exams.length} | \uacfc\uc81c ${data.assignments.length} | ` +
+    `\ud034\uc988 ${data.quizzes.length} | \uacf5\uc9c0 ${data.notices.length} | \ud559\uc0ac\uc77c\uc815 ${data.schedule.length}`,
+  );
   console.log();
 
   return data;
