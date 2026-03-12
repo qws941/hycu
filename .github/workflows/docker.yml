@@ -62,22 +62,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    environment: production-nas
-    steps:
-      - uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        with:
-          host: ${{ vars.NAS_HOST }}
-          username: ${{ vars.NAS_USER }}
-          password: ${{ secrets.NAS_SSH_PASSWORD }}
-          script: |
-            cd ${{ vars.NAS_PROJECT_DIR }}
-            ${{ vars.NAS_DOCKER_BIN }} compose pull
-            ${{ vars.NAS_DOCKER_BIN }} compose up -d --remove-orphans
-            sleep 5
-            ${{ vars.NAS_DOCKER_BIN }} ps --filter name=hycu-scheduler --format '{{.Status}}' | grep -q 'Up' \
-              && echo '✅ Deploy OK: hycu-scheduler running' \
-              || (echo '❌ Deploy FAILED: hycu-scheduler not running' && exit 1)
+  # Deployment: Watchtower on NAS polls GHCR every 5 minutes and auto-pulls
+  # new images. No active SSH deploy needed (NAS is on a private network).
